@@ -1,0 +1,23 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@felipe-lib/schema-local':
+        specifier: ^1.7.0
+        version: 1.7.0
+
+packages:
+
+  '@felipe-lib/schema-local@1.7.0':
+    resolution: {integrity: sha512-X2NsDoFpyJXIZN51rU0k6vphZxp5JrS40858V5KRMkgOuy4m/oUwC5mj4Jy/Ev87VqJQh/syBOmP6ReMTgCEtQ==}
+    engines: {node: '>=18.0.0'}
+
+snapshots:
+
+  '@felipe-lib/schema-local@1.7.0': {}
