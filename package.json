@@ -10,7 +10,7 @@
     "author": "",
     "license": "ISC",
     "packageManager": "pnpm@10.20.0",
-    "dependencies": {
-        "@felipe-lib/schema-local": "^1.7.0"
+    "devDependencies": {
+        "typescript": "^6.0.3"
     }
 }

@@ -1,7 +1,7 @@
 import type { getBufferType } from "./type";
 
 export class StreamHttpEvent {
-    private url!: string;
+    private url?: string;
     private headers?: Record<string, string> = {};
     private body?: any;
     private extractor?: (data: string) => any;
