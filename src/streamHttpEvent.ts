@@ -1,4 +1,6 @@
-import type { getBufferType } from "./type";
+import type { getBufferType, FetchOptions } from "./type.js";
+
+export type { FetchOptions };
 
 export class StreamHttpEvent {
     private url?: string;
@@ -48,7 +50,7 @@ export class StreamHttpEvent {
         controller: ReadableStreamDefaultController<any>;
         encoder: TextEncoder;
         extractor: (data: string) => any;
-        encodeBytes: boolean;
+        encodeBytes: undefined | boolean;
     }) {
         const lines = buffer.getBuffer().split("\n");
         buffer.setBuffer(lines.pop() ?? "");
@@ -94,7 +96,7 @@ export class StreamHttpEvent {
         encodeBytes,
     }: {
         body: ReadableStream<Uint8Array>;
-        encodeBytes: boolean;
+        encodeBytes: boolean | undefined;
     }) {
         if (!body) return null;
         const bodyReader = body.getReader();
@@ -140,7 +142,7 @@ export class StreamHttpEvent {
         });
     }
 
-    public async fetchIA({ encodeBytes }: { encodeBytes: boolean }) {
+    public async fetchIA({ encodeBytes, signal, maxRetries }: FetchOptions) {
         if (!this.url) {
             throw new Error("dataFetch() must be called before fetchIA()");
         }
@@ -149,6 +151,7 @@ export class StreamHttpEvent {
             method: "POST",
             headers: this.headers,
             body: this.body,
+            signal: signal,
         });
 
         if (!fetcher.ok) {
