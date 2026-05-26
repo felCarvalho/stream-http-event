@@ -50,6 +50,7 @@ streamer.dataFetch({
 });
 
 // 2. Execute and consume the stream
+// With encodeBytes: true — each chunk is encoded as Uint8Array
 const stream = await streamer.fetchIA({ encodeBytes: true });
 
 // 3. Read from the stream
@@ -58,6 +59,16 @@ while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     console.log(new TextDecoder().decode(value));
+}
+
+// --- Or with encodeBytes: false — values are enqueued as plain strings ---
+
+const plainStream = await streamer.fetchIA({ encodeBytes: false });
+const plainReader = plainStream.getReader();
+while (true) {
+    const { done, value } = await plainReader.read();
+    if (done) break;
+    console.log(value); // value is already a string, no TextDecoder needed
 }
 ```
 
@@ -160,6 +171,7 @@ streamer.dataFetch({
 });
 
 // 2. Executar e consumir o stream
+// Com encodeBytes: true — cada chunk é codificado como Uint8Array
 const stream = await streamer.fetchIA({ encodeBytes: true });
 
 // 3. Ler do stream
@@ -168,6 +180,16 @@ while (true) {
     const { done, value } = await reader.read();
     if (done) break;
     console.log(new TextDecoder().decode(value));
+}
+
+// --- Ou com encodeBytes: false — valores são enfileirados como strings ---
+
+const plainStream = await streamer.fetchIA({ encodeBytes: false });
+const plainReader = plainStream.getReader();
+while (true) {
+    const { done, value } = await plainReader.read();
+    if (done) break;
+    console.log(value); // value já é string, não precisa de TextDecoder
 }
 ```
 
