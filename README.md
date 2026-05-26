@@ -105,15 +105,70 @@ Throws an error if `dataFetch()` was not called beforehand.
 
 ---
 
-### How SSE Parsing Works
+### Internal Buffer — How It Works
 
-1. `fetchIA()` makes a `POST` request to the configured URL.
-2. If the response is `text/event-stream`, `streamIA()` creates a `ReadableStream` from the response body.
-3. An internal buffer accumulates partial chunks (network packets may split a `data:` line mid-stream).
-4. `serialize()` splits the buffer by `\n`, processes complete lines, and keeps the last (possibly incomplete) line for the next iteration.
-5. Lines starting with `data:` are stripped of the prefix and passed to the user's `extractor`.
-6. `[DONE]` closes the stream.
-7. Empty lines and non-`data:` lines are skipped.
+SSE streams are delivered over HTTP as a continuous flow of bytes. Network packets can split a `data:` line mid-stream, so the library uses an **internal buffer** to reconstruct complete lines before processing them.
+
+#### The Problem
+
+A single SSE event like `data: {"token":"hello"}\n\n` may arrive in two separate network chunks:
+
+```
+// Chunk 1: "data: {\"tok"
+// Chunk 2: "en\":\"hello\"}\n\n"
+```
+
+Without buffering, chunk 1 would be unparseable garbage.
+
+#### How the Buffer Solves It
+
+```
+┌──────────────┐     ┌─────────────────┐     ┌────────────┐     ┌──────────────┐
+│  Network     │     │  getBuffer()    │     │ serialize()│     │ ReadableStream│
+│  Chunks      │────▶│  Accumulates    │────▶│ Splits by  │────▶│ enqueue()     │
+│  (Uint8Array)│     │  raw text       │     │ \n, keeps  │     │ one per event │
+└──────────────┘     └─────────────────┘     │ remainder  │     └──────────────┘
+                                             └────────────┘
+```
+
+**Step by step:**
+
+1. **Accumulate** — each network chunk is decoded to text (`TextDecoder`) and appended to the internal buffer (`buffer.add(data)`).
+
+2. **Split** — `serialize()` splits the buffer by `\n`, producing an array of lines.
+
+3. **Preserve remainder** — the last element after splitting is kept in the buffer (`buffer.setBuffer(lines.pop())`). This is the key: if a line was incomplete, it stays in the buffer and waits for the next chunk to complete it. If the line was complete, `lines.pop()` returns an empty string (harmless).
+
+4. **Process** — complete lines are iterated: `data:` lines have their prefix stripped and are passed to your `extractor`. Empty lines and other SSE fields (like `event:`, `id:`) are skipped.
+
+5. **Enqueue** — each extracted value is pushed into the output `ReadableStream`. Only `[DONE]` closes the stream early.
+
+```
+Example with encodeBytes: true
+
+Buffer state across chunks:
+─────────────────────────────────────────────────
+Chunk arrives: "data: hello\n"
+  → buffer = "data: hello\n"
+  → split by \n → ["data: hello", ""]
+  → pop "" → buffer = ""
+  → enqueue encoder.encode('"hello"\n')  ✅ Uint8Array
+
+Chunk arrives: "data: wo"
+  → buffer = "data: wo"
+  → split by \n → ["data: wo"]
+  → pop "data: wo" → buffer = "data: wo"  ⏳ waits
+
+Chunk arrives: "rld\n"
+  → buffer = "data: world\n"
+  → split by \n → ["data: world", ""]
+  → pop "" → buffer = ""
+  → enqueue encoder.encode('"world"\n')  ✅ Uint8Array
+```
+
+#### Key Takeaway
+
+> The buffer is **internal and automatic**. You never interact with it directly. It exists solely to handle network fragmentation and is **independent of the `encodeBytes` setting** — it works the same way whether you choose `true` or `false`.
 
 ### Build
 
@@ -226,15 +281,70 @@ Lança erro se `dataFetch()` não tiver sido chamado antes.
 
 ---
 
-### Como o Parse do SSE Funciona
+### Buffer Interno — Como Funciona
 
-1. `fetchIA()` faz uma requisição `POST` para a URL configurada.
-2. Se a resposta for `text/event-stream`, `streamIA()` cria uma `ReadableStream` do corpo da resposta.
-3. Um buffer interno acumula chunks parciais (pacotes de rede podem dividir uma linha `data:` no meio).
-4. `serialize()` divide o buffer por `\n`, processa linhas completas e mantém a última linha (possivelmente incompleta) para a próxima iteração.
-5. Linhas iniciadas por `data:` têm o prefixo removido e são passadas ao `extractor`.
-6. `[DONE]` fecha o stream.
-7. Linhas vazias e sem `data:` são ignoradas.
+Streams SSE são entregues via HTTP como um fluxo contínuo de bytes. Pacotes de rede podem dividir uma linha `data:` no meio do caminho, então a biblioteca usa um **buffer interno** para reconstruir linhas completas antes de processá-las.
+
+#### O Problema
+
+Um único evento SSE como `data: {"token":"olá"}\n\n` pode chegar em dois chunks de rede separados:
+
+```
+// Chunk 1: "data: {\"tok"
+// Chunk 2: "en\":\"olá\"}\n\n"
+```
+
+Sem o buffer, o chunk 1 seria lixo impossível de interpretar.
+
+#### Como o Buffer Resolve
+
+```
+┌──────────────┐     ┌─────────────────┐     ┌────────────┐     ┌──────────────┐
+│  Chunks de   │     │  getBuffer()    │     │ serialize()│     │ ReadableStream│
+│  Rede        │────▶│  Acumula texto  │────▶│ Divide por │────▶│ enqueue()     │
+│  (Uint8Array)│     │  bruto          │     │ \n, guarda │     │ um por evento │
+└──────────────┘     └─────────────────┘     │ o resto    │     └──────────────┘
+                                             └────────────┘
+```
+
+**Passo a passo:**
+
+1. **Acumular** — cada chunk de rede é decodificado para texto (`TextDecoder`) e anexado ao buffer interno (`buffer.add(data)`).
+
+2. **Dividir** — `serialize()` divide o buffer por `\n`, produzindo um array de linhas.
+
+3. **Preservar o resto** — o último elemento após a divisão é mantido no buffer (`buffer.setBuffer(lines.pop())`). Este é o segredo: se uma linha estava incompleta, ela fica no buffer e aguarda o próximo chunk para se completar. Se a linha já estava completa, `lines.pop()` retorna uma string vazia (inofensivo).
+
+4. **Processar** — as linhas completas são iteradas: o prefixo `data:` é removido e o conteúdo é passado ao seu `extractor`. Linhas vazias e outros campos SSE (como `event:`, `id:`) são ignorados.
+
+5. **Enfileirar** — cada valor extraído é empurrado para a `ReadableStream` de saída. Apenas `[DONE]` fecha o stream antes da hora.
+
+```
+Exemplo com encodeBytes: true
+
+Estado do buffer ao longo dos chunks:
+─────────────────────────────────────────────────
+Chegou chunk: "data: olá\n"
+  → buffer = "data: olá\n"
+  → divide por \n → ["data: olá", ""]
+  → pop "" → buffer = ""
+  → enqueue encoder.encode('"olá"\n')  ✅ Uint8Array
+
+Chegou chunk: "data: mu"
+  → buffer = "data: mu"
+  → divide por \n → ["data: mu"]
+  → pop "data: mu" → buffer = "data: mu"  ⏳ aguarda
+
+Chegou chunk: "ndo\n"
+  → buffer = "data: mundo\n"
+  → divide por \n → ["data: mundo", ""]
+  → pop "" → buffer = ""
+  → enqueue encoder.encode('"mundo"\n')  ✅ Uint8Array
+```
+
+#### Resumo
+
+> O buffer é **interno e automático**. Você nunca interage com ele diretamente. Ele existe apenas para lidar com a fragmentação da rede e é **independente da configuração `encodeBytes`** — funciona da mesma forma seja `true` ou `false`.
 
 ### Build
 
