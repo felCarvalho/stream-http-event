@@ -141,6 +141,10 @@ export class StreamHttpEvent {
     }
 
     public async fetchIA({ encodeBytes }: { encodeBytes: boolean }) {
+        if (!this.url) {
+            throw new Error("dataFetch() must be called before fetchIA()");
+        }
+
         const fetcher = await fetch(this.url, {
             method: "POST",
             headers: this.headers,
