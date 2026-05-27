@@ -10,11 +10,12 @@ A lightweight TypeScript library for consuming **Server-Sent Events (SSE)** over
 
 ### Features
 
-- Sends HTTP POST requests with custom headers and body
+- Configurable HTTP method (defaults to `POST`), headers and body
 - Parses `text/event-stream` (SSE) responses in real-time via `ReadableStream`
 - Handles partial/incomplete chunks across network boundaries with an internal buffer
-- User-defined **extractor** to transform raw `data:` lines into structured objects
+- User-defined **extractor** to transform raw `data:` lines into structured objects (optional, falls back to raw data)
 - Detects `[DONE]` as the stream termination signal
+- Optional `timeOut` to abort hanging connections (resets on each received chunk)
 - Optionally encodes output as `Uint8Array` bytes (ideal for piping into further streams)
 - Falls back to `response.json()` for non-streaming responses
 
@@ -31,13 +32,21 @@ import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
 
 const streamer = new StreamHttpEvent();
 
-// 1. Configure the request and extractor
+// 1. Static config — reusable across multiple fetchIA() calls
 streamer.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
     headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
     },
+    timeOut: 30000, // 30s timeout, resets on each chunk received
+});
+
+// 2. Execute — pass per-request options (body, method, extractor)
+// With encodeBytes: true — each chunk is encoded as Uint8Array
+const stream = await streamer.fetchIA({
+    encodeBytes: true,
+    method: "POST",
     body: JSON.stringify({
         model: "gpt-4",
         messages: [{ role: "user", content: "Hello!" }],
@@ -48,10 +57,6 @@ streamer.dataFetch({
         return parsed.choices?.[0]?.delta?.content ?? "";
     },
 });
-
-// 2. Execute and consume the stream
-// With encodeBytes: true — each chunk is encoded as Uint8Array
-const stream = await streamer.fetchIA({ encodeBytes: true });
 
 // 3. Read from the stream
 const reader = stream.getReader();
@@ -82,14 +87,13 @@ Main class for streaming HTTP event handling.
 
 ##### `dataFetch(options)`
 
-Configures the fetch request and the extraction logic. **Must be called before `fetchIA()`.**
+Configures the static request parameters. **Must be called before `fetchIA()`.** Can be called once and reused across multiple `fetchIA()` calls.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `url` | `string` | Yes | The endpoint URL |
 | `headers` | `Record<string, string>` | No | HTTP headers (e.g., `Authorization`, `Content-Type`) |
-| `body` | `any` | No | Request body — typically `JSON.stringify(...)` |
-| `extractor` | `(data: string) => any` | Yes | Transforms each parsed `data:` line into the desired output format |
+| `timeOut` | `number` | No | Max milliseconds without a chunk before aborting. Resets on each received chunk. If `0` or omitted, no timeout is enforced. |
 
 ---
 
@@ -101,7 +105,11 @@ Throws an error if `dataFetch()` was not called beforehand.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `encodeBytes` | `boolean` | Yes | If `true`, each extracted chunk is `JSON.stringify()`-ed, suffixed with `\n`, and encoded as `Uint8Array`. If `false`, raw extracted values are enqueued as-is. |
+| `encodeBytes` | `boolean` | No | If `true`, each extracted chunk is `JSON.stringify()`-ed, suffixed with `\n`, and encoded as `Uint8Array`. If `false` or omitted, values are enqueued as plain strings. |
+| `signal` | `AbortSignal` | No | Passed to the underlying `fetch()` call. Aborting the signal cancels the HTTP request and the stream reader. |
+| `method` | `string` | No | HTTP method for the request. Defaults to `"POST"`. |
+| `body` | `any` | No | Request body. Typically `JSON.stringify(...)`. Defaults to `"{}"`. |
+| `extractor` | `(data: string) => any` | No | Transforms each parsed `data:` line into the desired output format. If omitted, the raw `data:` content is enqueued as-is. |
 
 ---
 
@@ -186,11 +194,12 @@ Uma biblioteca TypeScript leve para consumir **Server-Sent Events (SSE)** sobre 
 
 ### Funcionalidades
 
-- Envia requisições HTTP POST com headers e body customizados
+- Método HTTP configurável (padrão `POST`), headers e body
 - Faz parse de respostas `text/event-stream` (SSE) em tempo real via `ReadableStream`
 - Lida com chunks parciais/incompletos com um buffer interno
-- **Extractor** definido pelo usuário para transformar linhas `data:` em objetos estruturados
+- **Extractor** definido pelo usuário para transformar linhas `data:` em objetos estruturados (opcional, fallback para dado bruto)
 - Detecta `[DONE]` como sinal de término do stream
+- `timeOut` opcional para abortar conexões travadas (reseta a cada chunk recebido)
 - Opcionalmente codifica a saída em `Uint8Array`
 - Fallback para `response.json()` em respostas não-streaming
 
@@ -207,13 +216,21 @@ import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
 
 const streamer = new StreamHttpEvent();
 
-// 1. Configurar a requisição e o extrator
+// 1. Configuração estática — reutilizável em várias chamadas fetchIA()
 streamer.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
     headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
     },
+    timeOut: 30000, // 30s de timeout, reseta a cada chunk recebido
+});
+
+// 2. Executar — opções por requisição (body, method, extractor)
+// Com encodeBytes: true — cada chunk é codificado como Uint8Array
+const stream = await streamer.fetchIA({
+    encodeBytes: true,
+    method: "POST",
     body: JSON.stringify({
         model: "gpt-4",
         messages: [{ role: "user", content: "Olá!" }],
@@ -224,10 +241,6 @@ streamer.dataFetch({
         return parsed.choices?.[0]?.delta?.content ?? "";
     },
 });
-
-// 2. Executar e consumir o stream
-// Com encodeBytes: true — cada chunk é codificado como Uint8Array
-const stream = await streamer.fetchIA({ encodeBytes: true });
 
 // 3. Ler do stream
 const reader = stream.getReader();
@@ -258,14 +271,13 @@ Classe principal para manipulação de streaming de eventos HTTP.
 
 ##### `dataFetch(options)`
 
-Configura a requisição fetch e a lógica de extração. **Deve ser chamado antes de `fetchIA()`.**
+Configura os parâmetros estáticos da requisição. **Deve ser chamado antes de `fetchIA()`.** Pode ser chamado uma vez e reutilizado em múltiplas chamadas `fetchIA()`.
 
 | Parâmetro | Tipo | Obrigatório | Descrição |
 |-----------|------|-------------|-----------|
 | `url` | `string` | Sim | A URL do endpoint |
 | `headers` | `Record<string, string>` | Não | Cabeçalhos HTTP (ex.: `Authorization`, `Content-Type`) |
-| `body` | `any` | Não | Corpo da requisição — normalmente `JSON.stringify(...)` |
-| `extractor` | `(data: string) => any` | Sim | Transforma cada linha `data:` no formato de saída desejado |
+| `timeOut` | `number` | Não | Milissegundos máximos sem chunk antes de abortar. Reseta a cada chunk recebido. Se `0` ou omitido, sem timeout. |
 
 ---
 
@@ -277,7 +289,11 @@ Lança erro se `dataFetch()` não tiver sido chamado antes.
 
 | Parâmetro | Tipo | Obrigatório | Descrição |
 |-----------|------|-------------|-----------|
-| `encodeBytes` | `boolean` | Sim | Se `true`, cada chunk é serializado com `JSON.stringify()`, sufixado com `\n` e codificado como `Uint8Array`. Se `false`, os valores são enfileirados como estão. |
+| `encodeBytes` | `boolean` | Não | Se `true`, cada chunk é serializado com `JSON.stringify()`, sufixado com `\n` e codificado como `Uint8Array`. Se `false` ou omitido, os valores são enfileirados como strings. |
+| `signal` | `AbortSignal` | Não | Repassado ao `fetch()` interno. Abortar o sinal cancela a requisição HTTP e o leitor do stream. |
+| `method` | `string` | Não | Método HTTP da requisição. Padrão `"POST"`. |
+| `body` | `any` | Não | Corpo da requisição. Normalmente `JSON.stringify(...)`. Padrão `"{}"`. |
+| `extractor` | `(data: string) => any` | Não | Transforma cada linha `data:` no formato de saída desejado. Se omitido, o conteúdo bruto do `data:` é enfileirado como está. |
 
 ---
 
