@@ -291,6 +291,69 @@ Uses TypeScript (`ES2020` / `ESM` output) targeting `DOM` + `ES2020` types.
 
 ---
 
+### Internal Flow
+
+Every `fetchIA()` call follows this execution pipeline:
+
+```
+dataFetch()  →  fetchIA()  →  fetch()  →  streamIA()  →  ReadableStream
+  (config)       (request)     (HTTP)      (factory)       (output)
+```
+
+**1. `dataFetch(url, headers, timeOut)`**
+Stores static config in instance fields. No request is made. Can be called once and reused across multiple `fetchIA()` calls.
+
+**2. `fetchIA({ encodeBytes, signal, method, body, extractor })`**
+Validates that `url` is set, then calls `fetch()` with the configured parameters. Checks response status and content type:
+- `text/event-stream` → delegates to `streamIA()` to create the output stream
+- Any other content type → falls back to `response.json()`
+
+**3. `streamIA(body, encodeBytes, extractor)`**
+Creates the output `ReadableStream`. Internally sets up:
+- `bodyReader` — reads raw network chunks from the HTTP response
+- `bufferControl` — accumulator for partial SSE lines
+- `timeOutControl` — manages `setTimeout`/`clearTimeout`
+- `TextDecoder`/`TextEncoder` — text ↔ bytes conversion
+
+**4. Read loop** (inside the `ReadableStream` callback)
+```
+start timeout → while(true):
+  read chunk from network
+  decode Uint8Array → text, append to buffer
+  reset timeout (each chunk extends the deadline)
+  serialize() — process complete SSE lines
+  if [DONE] → clear timeout, close stream
+on error → clear timeout, propagate error
+finally → release reader lock
+```
+
+**5. `serialize(buffer, controller, encoder, extractor, encodeBytes)`**
+```
+buffer.split("\n")          → split accumulated text into lines
+lines.pop() → back to buffer → keep incomplete line for next chunk
+
+for each complete line:
+  empty line?        → skip
+  contains [DONE]?   → close stream, return
+  starts with data:? → strip prefix, call extractor (or use raw)
+                        encodeBytes?
+                          true  → enqueue Uint8Array with trailing \n
+                          false → enqueue plain string
+```
+
+**6. `timeout(controller, timeOutId, bodyReader)`**
+```
+if active timer exists → clear it
+if this.timeOut > 0 → setTimeout(timeOut ms):
+  controller.error()   → terminates output stream
+  bodyReader.cancel()  → closes network read
+```
+Both `error()` and `cancel()` together kill the connection to the AI provider.
+
+---
+
+---
+
 ## Português
 
 Uma biblioteca TypeScript leve para consumir **Server-Sent Events (SSE)** sobre HTTP — criada para respostas em streaming de APIs de IA/LLM.
@@ -575,6 +638,69 @@ pnpm build
 ```
 
 Usa TypeScript (`ES2020` / `ESM`), com target `DOM` + `ES2020`.
+
+---
+
+### Fluxo Interno
+
+Cada chamada `fetchIA()` segue este pipeline de execução:
+
+```
+dataFetch()  →  fetchIA()  →  fetch()  →  streamIA()  →  ReadableStream
+  (config)       (requisição)  (HTTP)      (fábrica)       (saída)
+```
+
+**1. `dataFetch(url, headers, timeOut)`**
+Armazena a config estática nos campos da instância. Nenhuma requisição é feita. Pode ser chamado uma vez e reutilizado em múltiplos `fetchIA()`.
+
+**2. `fetchIA({ encodeBytes, signal, method, body, extractor })`**
+Valida se `url` está definida, depois chama `fetch()` com os parâmetros configurados. Verifica status e content-type da resposta:
+- `text/event-stream` → delega para `streamIA()` criar o stream de saída
+- Outro content-type → fallback para `response.json()`
+
+**3. `streamIA(body, encodeBytes, extractor)`**
+Cria o `ReadableStream` de saída. Internamente configura:
+- `bodyReader` — lê chunks brutos da rede da resposta HTTP
+- `bufferControl` — acumulador de linhas SSE parciais
+- `timeOutControl` — gerencia `setTimeout`/`clearTimeout`
+- `TextDecoder`/`TextEncoder` — conversão texto ↔ bytes
+
+**4. Loop de leitura** (dentro do callback do `ReadableStream`)
+```
+inicia timeout → while(true):
+  lê chunk da rede
+  decodifica Uint8Array → texto, anexa ao buffer
+  reinicia timeout (cada chunk estende o prazo)
+  serialize() — processa linhas SSE completas
+  se [DONE] → limpa timeout, fecha stream
+em erro → limpa timeout, propaga erro
+finally → libera lock do reader
+```
+
+**5. `serialize(buffer, controller, encoder, extractor, encodeBytes)`**
+```
+buffer.split("\n")          → divide o texto acumulado por linhas
+lines.pop() → volta ao buffer → guarda linha incompleta para o próximo chunk
+
+para cada linha completa:
+  linha vazia?      → pula
+  contém [DONE]?    → fecha stream, retorna
+  começa com data:? → remove prefixo, chama extractor (ou usa raw)
+                       encodeBytes?
+                         true  → enqueue Uint8Array com \n no final
+                         false → enqueue string pura
+```
+
+**6. `timeout(controller, timeOutId, bodyReader)`**
+```
+se timer ativo existe → limpa
+se this.timeOut > 0 → setTimeout(timeOut ms):
+  controller.error()   → encerra o stream de saída
+  bodyReader.cancel()  → fecha a leitura da rede
+```
+`error()` e `cancel()` juntos matam a conexão com o provedor de IA.
+
+---
 
 ---
 
