@@ -290,6 +290,129 @@ app.get("/chat", async (req, res) => {
 });
 ```
 
+#### Browser — consume AI stream from the frontend
+
+The library works in the browser (targets `DOM` + `ES2020`). Below are examples of consuming the stream on the client side.
+
+##### Vanilla JS — fetch + ReadableStream
+
+```typescript
+// The backend exposes the AI stream at /chat (see Express example above)
+const response = await fetch("/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: "Explain quantum computing." }),
+});
+
+const reader = response.body!.getReader();
+const decoder = new TextDecoder();
+const outputEl = document.getElementById("output")!;
+
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const text = decoder.decode(value, { stream: true });
+    const lines = text.split("\n");
+
+    for (const line of lines) {
+        if (line.startsWith("data: ")) {
+            const json = JSON.parse(line.slice(6));
+            outputEl.textContent += json.content; // append token to DOM
+        }
+    }
+}
+```
+
+##### React — streaming state update
+
+```tsx
+import { useState, useRef } from "react";
+
+function Chat() {
+    const [text, setText] = useState("");
+    const abortRef = useRef<AbortController | null>(null);
+
+    const send = async (prompt: string) => {
+        abortRef.current = new AbortController();
+        setText("");
+
+        const response = await fetch("/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt }),
+            signal: abortRef.current.signal,
+        });
+
+        const reader = response.body!.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split("\n");
+
+            for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                    const json = JSON.parse(line.slice(6));
+                    setText((prev) => prev + json.content); // incremental render
+                }
+            }
+        }
+    };
+
+    const cancel = () => abortRef.current?.abort();
+
+    return (
+        <div>
+            <pre>{text}</pre>
+            <button onClick={() => send("Explain quantum computing.")}>Send</button>
+            <button onClick={cancel}>Cancel</button>
+        </div>
+    );
+}
+```
+
+##### Using the lib directly in the browser
+
+You can also call AI providers straight from the browser — no backend needed:
+
+```typescript
+import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
+
+const streamer = new StreamHttpEvent();
+streamer.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
+    },
+});
+
+const stream = await streamer.fetchIA({
+    encodeBytes: false,
+    body: JSON.stringify({
+        model: "gpt-4",
+        messages: [{ role: "user", content: "Hello!" }],
+        stream: true,
+    }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+
+const reader = stream.getReader();
+const output = document.getElementById("output")!;
+
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    output.textContent += value; // value is already a string
+}
+```
+
+> **Security note:** exposing API keys in the browser is risky. Prefer the backend proxy pattern (Express example above) for production apps.
+
 ---
 
 ### Internal Buffer — How It Works
@@ -715,6 +838,129 @@ app.get("/chat", async (req, res) => {
     req.on("close", () => reader.cancel());
 });
 ```
+
+#### Navegador — consumir stream da IA no frontend
+
+A biblioteca funciona no navegador (target `DOM` + `ES2020`). Abaixo exemplos de consumo no lado do cliente.
+
+##### Vanilla JS — fetch + ReadableStream
+
+```typescript
+// O backend expõe o stream da IA em /chat (veja o exemplo Express acima)
+const response = await fetch("/chat", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: "Explique computação quântica." }),
+});
+
+const reader = response.body!.getReader();
+const decoder = new TextDecoder();
+const outputEl = document.getElementById("output")!;
+
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    const text = decoder.decode(value, { stream: true });
+    const lines = text.split("\n");
+
+    for (const line of lines) {
+        if (line.startsWith("data: ")) {
+            const json = JSON.parse(line.slice(6));
+            outputEl.textContent += json.content; // anexa token ao DOM
+        }
+    }
+}
+```
+
+##### React — atualização de estado em streaming
+
+```tsx
+import { useState, useRef } from "react";
+
+function Chat() {
+    const [text, setText] = useState("");
+    const abortRef = useRef<AbortController | null>(null);
+
+    const send = async (prompt: string) => {
+        abortRef.current = new AbortController();
+        setText("");
+
+        const response = await fetch("/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt }),
+            signal: abortRef.current.signal,
+        });
+
+        const reader = response.body!.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            const chunk = decoder.decode(value, { stream: true });
+            const lines = chunk.split("\n");
+
+            for (const line of lines) {
+                if (line.startsWith("data: ")) {
+                    const json = JSON.parse(line.slice(6));
+                    setText((prev) => prev + json.content); // render incremental
+                }
+            }
+        }
+    };
+
+    const cancel = () => abortRef.current?.abort();
+
+    return (
+        <div>
+            <pre>{text}</pre>
+            <button onClick={() => send("Explique computação quântica.")}>Enviar</button>
+            <button onClick={cancel}>Cancelar</button>
+        </div>
+    );
+}
+```
+
+##### Usando a lib direto no navegador
+
+Também é possível chamar os provedores de IA direto do navegador — sem backend:
+
+```typescript
+import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
+
+const streamer = new StreamHttpEvent();
+streamer.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
+    },
+});
+
+const stream = await streamer.fetchIA({
+    encodeBytes: false,
+    body: JSON.stringify({
+        model: "gpt-4",
+        messages: [{ role: "user", content: "Olá!" }],
+        stream: true,
+    }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+
+const reader = stream.getReader();
+const output = document.getElementById("output")!;
+
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    output.textContent += value; // value já é string
+}
+```
+
+> **Nota de segurança:** expor chaves de API no navegador é arriscado. Prefira o padrão de proxy com backend (exemplo Express acima) para aplicações em produção.
 
 ---
 
