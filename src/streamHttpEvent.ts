@@ -1,4 +1,12 @@
-import type { getBufferType, FetchOptions } from "./type.js";
+import type {
+    bufferControlType,
+    timeOutControlType,
+    dataFetchType,
+    serializeType,
+    timeoutType,
+    streamIaType,
+    FetchOptions,
+} from "./type.js";
 
 export type { FetchOptions };
 
@@ -7,25 +15,17 @@ export class StreamHttpEvent {
     private headers?: Record<string, string> = {};
     private body?: any;
     private extractor?: (data: string) => any;
+    private timeOut?: number;
 
-    public dataFetch({
-        url,
-        headers,
-        body,
-        extractor,
-    }: {
-        url: string;
-        headers?: Record<string, string>;
-        body?: any;
-        extractor: (data: string) => any;
-    }) {
+    public dataFetch({ url, headers, body, extractor, timeOut }: dataFetchType) {
         this.url = url;
         this.headers = headers ?? {};
         this.body = body;
         this.extractor = extractor;
+        this.timeOut = timeOut;
     }
 
-    private getBuffer() {
+    private bufferControl() {
         let buffer = "";
 
         return {
@@ -39,19 +39,48 @@ export class StreamHttpEvent {
         };
     }
 
+    private timeOutControl() {
+        let timeOutId: ReturnType<typeof setTimeout> | undefined;
+        return {
+            getTime: () => timeOutId,
+            setTime: ({ id }: { id: ReturnType<typeof setTimeout> }) => {
+                timeOutId = id;
+            },
+            clearTime: () => {
+                if (timeOutId) {
+                    clearTimeout(timeOutId);
+                    timeOutId = undefined;
+                }
+            },
+        };
+    }
+
+    private timeout({ controller, timeOutId, bodyReader }: timeoutType) {
+        if (timeOutId.getTime()) {
+            timeOutId.clearTime();
+        }
+
+        if (this.timeOut) {
+            timeOutId.setTime({
+                id: setTimeout(() => {
+                    controller.error(
+                        new Error(
+                            `Ops, Sua provedor de IA demorou mais de ${this.timeOut}ms`,
+                        ),
+                    );
+                    bodyReader.cancel();
+                }, this.timeOut),
+            });
+        }
+    }
+
     private serialize({
         buffer,
         controller,
         encoder,
         extractor,
         encodeBytes,
-    }: {
-        buffer: getBufferType;
-        controller: ReadableStreamDefaultController<any>;
-        encoder: TextEncoder;
-        extractor: (data: string) => any;
-        encodeBytes: undefined | boolean;
-    }) {
+    }: serializeType) {
         const lines = buffer.getBuffer().split("\n");
         buffer.setBuffer(lines.pop() ?? "");
 
@@ -91,26 +120,24 @@ export class StreamHttpEvent {
         return false;
     }
 
-    private streamIA({
-        body,
-        encodeBytes,
-    }: {
-        body: ReadableStream<Uint8Array>;
-        encodeBytes: boolean | undefined;
-    }) {
+    private streamIA({ body, encodeBytes }: streamIaType) {
         if (!body) return null;
         const bodyReader = body.getReader();
-        const buffer = this.getBuffer();
+        const buffer = this.bufferControl();
+        const timeOutId = this.timeOutControl();
         const decoder: TextDecoder = new TextDecoder();
         const encoder: TextEncoder = new TextEncoder();
 
         return new ReadableStream({
             start: async (controller) => {
+                this.timeout({ controller, timeOutId, bodyReader });
+
                 try {
                     while (true) {
                         const { value, done } = await bodyReader.read();
 
                         if (done) {
+                            timeOutId.clearTime();
                             controller.close();
                             break;
                         }
@@ -121,6 +148,8 @@ export class StreamHttpEvent {
                             }),
                         );
 
+                        this.timeout({ controller, timeOutId, bodyReader });
+
                         const isDone = this.serialize({
                             buffer,
                             controller,
@@ -130,10 +159,12 @@ export class StreamHttpEvent {
                             encodeBytes,
                         });
                         if (isDone) {
+                            timeOutId.clearTime();
                             break;
                         }
                     }
                 } catch (error) {
+                    timeOutId.clearTime();
                     controller.error(error);
                 } finally {
                     bodyReader.releaseLock();
@@ -142,7 +173,7 @@ export class StreamHttpEvent {
         });
     }
 
-    public async fetchIA({ encodeBytes, signal, maxRetries }: FetchOptions) {
+    public async fetchIA({ encodeBytes, signal }: FetchOptions) {
         if (!this.url) {
             throw new Error("dataFetch() must be called before fetchIA()");
         }
