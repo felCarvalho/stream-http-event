@@ -113,6 +113,109 @@ Throws an error if `dataFetch()` was not called beforehand.
 
 ---
 
+### Usage Examples
+
+#### Cancel with AbortController
+
+```typescript
+const controller = new AbortController();
+
+// Cancel after 10 seconds
+setTimeout(() => controller.abort(), 10000);
+
+const stream = await streamer.fetchIA({
+    signal: controller.signal,
+    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+
+// stream.getReader() will reject with AbortError after 10s
+```
+
+#### Timeout — abort hanging providers
+
+```typescript
+streamer.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+    timeOut: 15000, // 15s without a chunk → abort
+});
+
+const stream = await streamer.fetchIA({
+    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+```
+
+#### Reuse config across multiple requests
+
+```typescript
+streamer.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+});
+
+// Request 1
+const stream1 = await streamer.fetchIA({
+    body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "Hi" }], stream: true }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+
+// Request 2 — same url and headers, different body
+const stream2 = await streamer.fetchIA({
+    body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "Bye" }], stream: true }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+```
+
+#### Raw data without extractor
+
+```typescript
+streamer.dataFetch({ url: "https://api.example.com/sse" });
+
+const stream = await streamer.fetchIA({ encodeBytes: false });
+// Each chunk is the raw data: line content as-is
+```
+
+#### Express.js endpoint — stream AI response to client
+
+```typescript
+app.get("/chat", async (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    const streamer = new StreamHttpEvent();
+    streamer.dataFetch({
+        url: "https://api.openai.com/v1/chat/completions",
+        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+    });
+
+    const stream = await streamer.fetchIA({
+        encodeBytes: false,
+        body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
+        extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    });
+
+    const reader = stream.getReader();
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(`data: ${JSON.stringify({ content: value })}\n\n`);
+        }
+    } finally {
+        res.end();
+        reader.releaseLock();
+    }
+
+    // Cleanup on client disconnect
+    req.on("close", () => reader.cancel());
+});
+```
+
+---
+
 ### Internal Buffer — How It Works
 
 SSE streams are delivered over HTTP as a continuous flow of bytes. Network packets can split a `data:` line mid-stream, so the library uses an **internal buffer** to reconstruct complete lines before processing them.
@@ -294,6 +397,109 @@ Lança erro se `dataFetch()` não tiver sido chamado antes.
 | `method` | `string` | Não | Método HTTP da requisição. Padrão `"POST"`. |
 | `body` | `any` | Não | Corpo da requisição. Normalmente `JSON.stringify(...)`. Padrão `"{}"`. |
 | `extractor` | `(data: string) => any` | Não | Transforma cada linha `data:` no formato de saída desejado. Se omitido, o conteúdo bruto do `data:` é enfileirado como está. |
+
+---
+
+### Exemplos de Uso
+
+#### Cancelar com AbortController
+
+```typescript
+const controller = new AbortController();
+
+// Cancela após 10 segundos
+setTimeout(() => controller.abort(), 10000);
+
+const stream = await streamer.fetchIA({
+    signal: controller.signal,
+    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+
+// stream.getReader() rejeitará com AbortError após 10s
+```
+
+#### Timeout — abortar providers travados
+
+```typescript
+streamer.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+    timeOut: 15000, // 15s sem chunk → aborta
+});
+
+const stream = await streamer.fetchIA({
+    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+```
+
+#### Reutilizar config em múltiplas requisições
+
+```typescript
+streamer.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+});
+
+// Requisição 1
+const stream1 = await streamer.fetchIA({
+    body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "Oi" }], stream: true }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+
+// Requisição 2 — mesma url e headers, body diferente
+const stream2 = await streamer.fetchIA({
+    body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "Tchau" }], stream: true }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+```
+
+#### Dado bruto sem extractor
+
+```typescript
+streamer.dataFetch({ url: "https://api.exemplo.com/sse" });
+
+const stream = await streamer.fetchIA({ encodeBytes: false });
+// Cada chunk é o conteúdo bruto da linha data: como está
+```
+
+#### Endpoint Express.js — stream da resposta da IA para o cliente
+
+```typescript
+app.get("/chat", async (req, res) => {
+    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader("Connection", "keep-alive");
+
+    const streamer = new StreamHttpEvent();
+    streamer.dataFetch({
+        url: "https://api.openai.com/v1/chat/completions",
+        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+    });
+
+    const stream = await streamer.fetchIA({
+        encodeBytes: false,
+        body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
+        extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    });
+
+    const reader = stream.getReader();
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            res.write(`data: ${JSON.stringify({ content: value })}\n\n`);
+        }
+    } finally {
+        res.end();
+        reader.releaseLock();
+    }
+
+    // Cleanup ao desconectar
+    req.on("close", () => reader.cancel());
+});
+```
 
 ---
 
