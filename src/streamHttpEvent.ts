@@ -1,6 +1,4 @@
 import type {
-    bufferControlType,
-    timeOutControlType,
     dataFetchType,
     serializeType,
     timeoutType,
