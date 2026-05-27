@@ -261,7 +261,7 @@ Use `encodeBytes: true` — the backend passes `Uint8Array` chunks directly to `
 
 ```typescript
 app.get("/chat", async (req, res) => {
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
@@ -806,7 +806,7 @@ Use `encodeBytes: true` — o backend repassa `Uint8Array` direto para `res.writ
 
 ```typescript
 app.get("/chat", async (req, res) => {
-    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Content-Type", "text/event-stream");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
