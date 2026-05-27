@@ -115,7 +115,7 @@ Throws an error if `dataFetch()` was not called beforehand.
 
 ### Usage Examples
 
-All examples below use `encodeBytes: false` for readability — swap to `true` if you need `Uint8Array` output.
+Provider examples use `encodeBytes: true` — each chunk is a `Uint8Array` with `\n` delimiter, ready for piping or file writes. For frontend consumption see the [Browser](#browser--consume-ai-stream-from-the-frontend) section.
 
 #### OpenAI (ChatGPT / GPT-4)
 
@@ -131,7 +131,7 @@ streamer.dataFetch({
 });
 
 const stream = await streamer.fetchIA({
-    encodeBytes: false,
+    encodeBytes: true,
     body: JSON.stringify({
         model: "gpt-4",
         messages: [{ role: "user", content: "Explain quantum computing in one paragraph." }],
@@ -157,7 +157,7 @@ streamer.dataFetch({
 });
 
 const stream = await streamer.fetchIA({
-    encodeBytes: false,
+    encodeBytes: true,
     body: JSON.stringify({
         model: "claude-3-opus-20240229",
         max_tokens: 1024,
@@ -185,7 +185,7 @@ streamer.dataFetch({
 });
 
 const stream = await streamer.fetchIA({
-    encodeBytes: false,
+    encodeBytes: true,
     body: JSON.stringify({
         contents: [{ parts: [{ text: "Explain quantum computing." }] }],
     }),
@@ -208,7 +208,7 @@ streamer.dataFetch({
 });
 
 const stream = await streamer.fetchIA({
-    encodeBytes: false,
+    encodeBytes: true,
     body: JSON.stringify({
         model: "llama3-70b-8192",
         messages: [{ role: "user", content: "Explain quantum computing." }],
@@ -230,7 +230,7 @@ streamer.dataFetch({
 });
 
 const stream = await streamer.fetchIA({
-    encodeBytes: false,
+    encodeBytes: true,
     body: JSON.stringify({
         model: "deepseek-chat",
         messages: [{ role: "user", content: "Explain quantum computing." }],
@@ -247,6 +247,7 @@ const controller = new AbortController();
 setTimeout(() => controller.abort(), 10000); // cancel after 10s
 
 const stream = await streamer.fetchIA({
+    encodeBytes: true,
     signal: controller.signal,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
     extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
@@ -661,7 +662,7 @@ Lança erro se `dataFetch()` não tiver sido chamado antes.
 
 ### Exemplos de Uso
 
-Todos os exemplos abaixo usam `encodeBytes: false` para legibilidade — troque para `true` se precisar de saída `Uint8Array`.
+Exemplos de providers usam `encodeBytes: true` — cada chunk é um `Uint8Array` com delimitador `\n`, pronto para pipe ou escrita em arquivo. Para consumo no frontend veja a seção [Navegador](#navegador--consumir-stream-da-ia-no-frontend).
 
 #### OpenAI (ChatGPT / GPT-4)
 
@@ -677,7 +678,7 @@ streamer.dataFetch({
 });
 
 const stream = await streamer.fetchIA({
-    encodeBytes: false,
+    encodeBytes: true,
     body: JSON.stringify({
         model: "gpt-4",
         messages: [{ role: "user", content: "Explique computação quântica em um parágrafo." }],
@@ -703,7 +704,7 @@ streamer.dataFetch({
 });
 
 const stream = await streamer.fetchIA({
-    encodeBytes: false,
+    encodeBytes: true,
     body: JSON.stringify({
         model: "claude-3-opus-20240229",
         max_tokens: 1024,
@@ -731,7 +732,7 @@ streamer.dataFetch({
 });
 
 const stream = await streamer.fetchIA({
-    encodeBytes: false,
+    encodeBytes: true,
     body: JSON.stringify({
         contents: [{ parts: [{ text: "Explique computação quântica." }] }],
     }),
@@ -754,7 +755,7 @@ streamer.dataFetch({
 });
 
 const stream = await streamer.fetchIA({
-    encodeBytes: false,
+    encodeBytes: true,
     body: JSON.stringify({
         model: "llama3-70b-8192",
         messages: [{ role: "user", content: "Explique computação quântica." }],
@@ -776,7 +777,7 @@ streamer.dataFetch({
 });
 
 const stream = await streamer.fetchIA({
-    encodeBytes: false,
+    encodeBytes: true,
     body: JSON.stringify({
         model: "deepseek-chat",
         messages: [{ role: "user", content: "Explique computação quântica." }],
@@ -793,6 +794,7 @@ const controller = new AbortController();
 setTimeout(() => controller.abort(), 10000); // cancela após 10s
 
 const stream = await streamer.fetchIA({
+    encodeBytes: true,
     signal: controller.signal,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
     extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
