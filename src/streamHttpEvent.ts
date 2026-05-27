@@ -114,7 +114,7 @@ export class StreamHttpEvent {
         return false;
     }
 
-    private async streamIA({ body, encodeBytes, extractor }: streamIaType) {
+    private streamIA({ body, encodeBytes, extractor }: streamIaType) {
         if (!body) return null;
         const bodyReader = body.getReader();
         const buffer = this.bufferControl();
