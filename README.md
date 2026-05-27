@@ -115,69 +115,146 @@ Throws an error if `dataFetch()` was not called beforehand.
 
 ### Usage Examples
 
+All examples below use `encodeBytes: false` for readability — swap to `true` if you need `Uint8Array` output.
+
+#### OpenAI (ChatGPT / GPT-4)
+
+```typescript
+const streamer = new StreamHttpEvent();
+streamer.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+    },
+    timeOut: 30000,
+});
+
+const stream = await streamer.fetchIA({
+    encodeBytes: false,
+    body: JSON.stringify({
+        model: "gpt-4",
+        messages: [{ role: "user", content: "Explain quantum computing in one paragraph." }],
+        stream: true,
+        temperature: 0.7,
+    }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+```
+
+#### Anthropic (Claude)
+
+Claude SSE emits typed events — `content_block_delta` carries the text. Other event types (e.g. `message_start`, `message_stop`) should be skipped.
+
+```typescript
+streamer.dataFetch({
+    url: "https://api.anthropic.com/v1/messages",
+    headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY!,
+        "anthropic-version": "2023-06-01",
+    },
+});
+
+const stream = await streamer.fetchIA({
+    encodeBytes: false,
+    body: JSON.stringify({
+        model: "claude-3-opus-20240229",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "Explain quantum computing." }],
+        stream: true,
+    }),
+    extractor: (data) => {
+        const parsed = JSON.parse(data);
+        if (parsed.type === "content_block_delta") {
+            return parsed.delta?.text ?? "";
+        }
+        return "";
+    },
+});
+```
+
+#### Google (Gemini)
+
+Gemini uses a query parameter for the API key and a different request/response shape.
+
+```typescript
+streamer.dataFetch({
+    url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:streamGenerateContent?key=${process.env.GEMINI_API_KEY}`,
+    headers: { "Content-Type": "application/json" },
+});
+
+const stream = await streamer.fetchIA({
+    encodeBytes: false,
+    body: JSON.stringify({
+        contents: [{ parts: [{ text: "Explain quantum computing." }] }],
+    }),
+    extractor: (data) => {
+        const parsed = JSON.parse(data);
+        return parsed.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    },
+});
+```
+
+#### Groq (OpenAI-compatible)
+
+```typescript
+streamer.dataFetch({
+    url: "https://api.groq.com/openai/v1/chat/completions",
+    headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+    },
+});
+
+const stream = await streamer.fetchIA({
+    encodeBytes: false,
+    body: JSON.stringify({
+        model: "llama3-70b-8192",
+        messages: [{ role: "user", content: "Explain quantum computing." }],
+        stream: true,
+    }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+```
+
+#### DeepSeek (OpenAI-compatible)
+
+```typescript
+streamer.dataFetch({
+    url: "https://api.deepseek.com/v1/chat/completions",
+    headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+    },
+});
+
+const stream = await streamer.fetchIA({
+    encodeBytes: false,
+    body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [{ role: "user", content: "Explain quantum computing." }],
+        stream: true,
+    }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+```
+
 #### Cancel with AbortController
 
 ```typescript
 const controller = new AbortController();
-
-// Cancel after 10 seconds
-setTimeout(() => controller.abort(), 10000);
+setTimeout(() => controller.abort(), 10000); // cancel after 10s
 
 const stream = await streamer.fetchIA({
     signal: controller.signal,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
     extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
 });
-
-// stream.getReader() will reject with AbortError after 10s
+// stream.getReader().read() will reject with AbortError after 10s
 ```
 
-#### Timeout — abort hanging providers
-
-```typescript
-streamer.dataFetch({
-    url: "https://api.openai.com/v1/chat/completions",
-    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-    timeOut: 15000, // 15s without a chunk → abort
-});
-
-const stream = await streamer.fetchIA({
-    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
-});
-```
-
-#### Reuse config across multiple requests
-
-```typescript
-streamer.dataFetch({
-    url: "https://api.openai.com/v1/chat/completions",
-    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-});
-
-// Request 1
-const stream1 = await streamer.fetchIA({
-    body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "Hi" }], stream: true }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
-});
-
-// Request 2 — same url and headers, different body
-const stream2 = await streamer.fetchIA({
-    body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "Bye" }], stream: true }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
-});
-```
-
-#### Raw data without extractor
-
-```typescript
-streamer.dataFetch({ url: "https://api.example.com/sse" });
-
-const stream = await streamer.fetchIA({ encodeBytes: false });
-// Each chunk is the raw data: line content as-is
-```
-
-#### Express.js endpoint — stream AI response to client
+#### Express.js endpoint — relay AI stream to browser
 
 ```typescript
 app.get("/chat", async (req, res) => {
@@ -209,7 +286,6 @@ app.get("/chat", async (req, res) => {
         reader.releaseLock();
     }
 
-    // Cleanup on client disconnect
     req.on("close", () => reader.cancel());
 });
 ```
@@ -465,69 +541,146 @@ Lança erro se `dataFetch()` não tiver sido chamado antes.
 
 ### Exemplos de Uso
 
+Todos os exemplos abaixo usam `encodeBytes: false` para legibilidade — troque para `true` se precisar de saída `Uint8Array`.
+
+#### OpenAI (ChatGPT / GPT-4)
+
+```typescript
+const streamer = new StreamHttpEvent();
+streamer.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+    },
+    timeOut: 30000,
+});
+
+const stream = await streamer.fetchIA({
+    encodeBytes: false,
+    body: JSON.stringify({
+        model: "gpt-4",
+        messages: [{ role: "user", content: "Explique computação quântica em um parágrafo." }],
+        stream: true,
+        temperature: 0.7,
+    }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+```
+
+#### Anthropic (Claude)
+
+O SSE do Claude emite eventos com tipos — `content_block_delta` carrega o texto. Outros tipos (`message_start`, `message_stop`) devem ser ignorados.
+
+```typescript
+streamer.dataFetch({
+    url: "https://api.anthropic.com/v1/messages",
+    headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY!,
+        "anthropic-version": "2023-06-01",
+    },
+});
+
+const stream = await streamer.fetchIA({
+    encodeBytes: false,
+    body: JSON.stringify({
+        model: "claude-3-opus-20240229",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "Explique computação quântica." }],
+        stream: true,
+    }),
+    extractor: (data) => {
+        const parsed = JSON.parse(data);
+        if (parsed.type === "content_block_delta") {
+            return parsed.delta?.text ?? "";
+        }
+        return "";
+    },
+});
+```
+
+#### Google (Gemini)
+
+O Gemini usa query parameter para a API key e formato diferente de request/response.
+
+```typescript
+streamer.dataFetch({
+    url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:streamGenerateContent?key=${process.env.GEMINI_API_KEY}`,
+    headers: { "Content-Type": "application/json" },
+});
+
+const stream = await streamer.fetchIA({
+    encodeBytes: false,
+    body: JSON.stringify({
+        contents: [{ parts: [{ text: "Explique computação quântica." }] }],
+    }),
+    extractor: (data) => {
+        const parsed = JSON.parse(data);
+        return parsed.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+    },
+});
+```
+
+#### Groq (compatível com OpenAI)
+
+```typescript
+streamer.dataFetch({
+    url: "https://api.groq.com/openai/v1/chat/completions",
+    headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+    },
+});
+
+const stream = await streamer.fetchIA({
+    encodeBytes: false,
+    body: JSON.stringify({
+        model: "llama3-70b-8192",
+        messages: [{ role: "user", content: "Explique computação quântica." }],
+        stream: true,
+    }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+```
+
+#### DeepSeek (compatível com OpenAI)
+
+```typescript
+streamer.dataFetch({
+    url: "https://api.deepseek.com/v1/chat/completions",
+    headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+    },
+});
+
+const stream = await streamer.fetchIA({
+    encodeBytes: false,
+    body: JSON.stringify({
+        model: "deepseek-chat",
+        messages: [{ role: "user", content: "Explique computação quântica." }],
+        stream: true,
+    }),
+    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+});
+```
+
 #### Cancelar com AbortController
 
 ```typescript
 const controller = new AbortController();
-
-// Cancela após 10 segundos
-setTimeout(() => controller.abort(), 10000);
+setTimeout(() => controller.abort(), 10000); // cancela após 10s
 
 const stream = await streamer.fetchIA({
     signal: controller.signal,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
     extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
 });
-
-// stream.getReader() rejeitará com AbortError após 10s
+// stream.getReader().read() rejeitará com AbortError após 10s
 ```
 
-#### Timeout — abortar providers travados
-
-```typescript
-streamer.dataFetch({
-    url: "https://api.openai.com/v1/chat/completions",
-    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-    timeOut: 15000, // 15s sem chunk → aborta
-});
-
-const stream = await streamer.fetchIA({
-    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
-});
-```
-
-#### Reutilizar config em múltiplas requisições
-
-```typescript
-streamer.dataFetch({
-    url: "https://api.openai.com/v1/chat/completions",
-    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-});
-
-// Requisição 1
-const stream1 = await streamer.fetchIA({
-    body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "Oi" }], stream: true }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
-});
-
-// Requisição 2 — mesma url e headers, body diferente
-const stream2 = await streamer.fetchIA({
-    body: JSON.stringify({ model: "gpt-4", messages: [{ role: "user", content: "Tchau" }], stream: true }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
-});
-```
-
-#### Dado bruto sem extractor
-
-```typescript
-streamer.dataFetch({ url: "https://api.exemplo.com/sse" });
-
-const stream = await streamer.fetchIA({ encodeBytes: false });
-// Cada chunk é o conteúdo bruto da linha data: como está
-```
-
-#### Endpoint Express.js — stream da resposta da IA para o cliente
+#### Endpoint Express.js — retransmitir stream da IA para o navegador
 
 ```typescript
 app.get("/chat", async (req, res) => {
@@ -559,7 +712,6 @@ app.get("/chat", async (req, res) => {
         reader.releaseLock();
     }
 
-    // Cleanup ao desconectar
     req.on("close", () => reader.cancel());
 });
 ```
