@@ -492,6 +492,167 @@ const toolCallExtractor = (data: string) => {
 };
 ```
 
+#### Typing the Extracted Data
+
+`JSON.parse()` returns `any`, so properties like `parsed.choices` won't offer autocomplete or type checking. Create your own interfaces, abstract classes, or use a validation/schema library so the extractor is fully typed:
+
+```typescript
+// Option A — manual interfaces (zero dependencies)
+interface OpenAIStreamDelta {
+    content?: string;
+    tool_calls?: Array<{
+        function: { name?: string; arguments?: string };
+    }>;
+}
+
+interface OpenAIStreamChoice {
+    delta?: OpenAIStreamDelta;
+}
+
+interface OpenAIStreamChunk {
+    choices?: OpenAIStreamChoice[];
+}
+
+// Now parsed has autocomplete:
+const typedOpenAIExtractor = (data: string) => {
+    const parsed: OpenAIStreamChunk = JSON.parse(data);
+    return parsed.choices?.[0]?.delta?.content ?? "";
+};
+```
+
+```typescript
+// Option B — Zod schema (runtime validation + TS types)
+import { z } from "zod";
+
+const OpenAIDeltaSchema = z.object({
+    content: z.string().optional(),
+    tool_calls: z.array(z.object({
+        function: z.object({
+            name: z.string().optional(),
+            arguments: z.string().optional(),
+        }),
+    })).optional(),
+});
+
+const OpenAIChunkSchema = z.object({
+    choices: z.array(z.object({
+        delta: OpenAIDeltaSchema.optional(),
+    })).optional(),
+});
+
+const zodOpenAIExtractor = (data: string) => {
+    const parsed = OpenAIChunkSchema.parse(JSON.parse(data));
+    return parsed.choices?.[0]?.delta?.content ?? "";
+    // parsed is fully typed + validated at runtime
+};
+```
+
+```typescript
+// Option C — abstract class + discriminated union (multi-provider)
+abstract class ProviderChunk {
+    abstract extractText(): string;
+}
+
+class OpenAIChunk extends ProviderChunk {
+    constructor(private raw: { choices?: Array<{ delta?: { content?: string } }> }) {
+        super();
+    }
+
+    extractText(): string {
+        return this.raw.choices?.[0]?.delta?.content ?? "";
+    }
+}
+
+function chunkFactory(provider: string, data: string): ProviderChunk {
+    const parsed = JSON.parse(data);
+    if (provider === "openai" || provider === "groq" || provider === "deepseek") {
+        return new OpenAIChunk(parsed);
+    }
+    throw new Error(`Unknown provider: ${provider}`);
+}
+
+const typedExtractor = (provider: string) => (data: string) => {
+    return chunkFactory(provider, data).extractText();
+};
+```
+
+> **Rule of thumb:** every `JSON.parse(data)` inside an extractor should be immediately followed by a cast to a known type, a schema parse, or a factory — never leave it as `any`.
+
+**Putting it all together** — a complete example using a typed interface + `StreamHttpEvent`:
+
+```typescript
+import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
+
+// 1. Define response types from your provider's docs
+interface OpenAIChunkDelta {
+    content?: string;
+    role?: string;
+}
+
+interface OpenAIChunkChoice {
+    index: number;
+    delta: OpenAIChunkDelta;
+    finish_reason: string | null;
+}
+interface OpenAIChunk {
+    id: string;
+    object: string;
+    created: number;
+    model: string;
+    choices: OpenAIChunkChoice[];
+}
+
+// 2. Typed extractor — full autocomplete on `parsed.`
+const typedExtractor = (data: string): string => {
+    const parsed: OpenAIChunk = JSON.parse(data);
+    // TypeScript autocompletes: parsed.id, parsed.choices, parsed.model...
+    return parsed.choices?.[0]?.delta?.content ?? "";
+};
+
+// 3. Use it
+const streamer = new StreamHttpEvent();
+streamer.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+});
+
+const stream = await streamer.fetchIA({
+    encodeBytes: true,
+    body: JSON.stringify({
+        model: "gpt-4",
+        messages: [{ role: "user", content: "Hello!" }],
+        stream: true,
+    }),
+    extractor: typedExtractor,
+});
+
+// 4. Read typed responses
+const reader = stream.getReader();
+const decoder = new TextDecoder();
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    console.log(decoder.decode(value));
+}
+```
+
+```typescript
+// Zod version — same flow, with runtime validation
+import { z } from "zod";
+
+const OpenAIChunkSchema = z.object({
+    choices: z.array(z.object({
+        delta: z.object({ content: z.string().optional() }).optional(),
+    })).optional(),
+});
+
+const zodExtractor = (data: string): string => {
+    const parsed = OpenAIChunkSchema.parse(JSON.parse(data));
+    // Throws ZodError if the response shape doesn't match
+    return parsed.choices?.[0]?.delta?.content ?? "";
+};
+```
+
 ---
 
 #### Dynamic Header Configuration
@@ -1224,6 +1385,167 @@ const toolCallExtractor = (data: string) => {
         return { type: "text", data: delta.content };
     }
     return null;
+};
+```
+
+#### Tipando os Dados Extraídos
+
+`JSON.parse()` retorna `any`, então propriedades como `parsed.choices` não oferecem autocomplete nem verificação de tipos. Crie suas próprias interfaces, classes abstratas ou use uma lib de schema/validação para que o extractor fique totalmente tipado:
+
+```typescript
+// Opção A — interfaces manuais (zero dependências)
+interface OpenAIStreamDelta {
+    content?: string;
+    tool_calls?: Array<{
+        function: { name?: string; arguments?: string };
+    }>;
+}
+
+interface OpenAIStreamChoice {
+    delta?: OpenAIStreamDelta;
+}
+
+interface OpenAIStreamChunk {
+    choices?: OpenAIStreamChoice[];
+}
+
+// Agora o parsed tem autocomplete:
+const typedOpenAIExtractor = (data: string) => {
+    const parsed: OpenAIStreamChunk = JSON.parse(data);
+    return parsed.choices?.[0]?.delta?.content ?? "";
+};
+```
+
+```typescript
+// Opção B — schema Zod (validação em runtime + tipos TS)
+import { z } from "zod";
+
+const OpenAIDeltaSchema = z.object({
+    content: z.string().optional(),
+    tool_calls: z.array(z.object({
+        function: z.object({
+            name: z.string().optional(),
+            arguments: z.string().optional(),
+        }),
+    })).optional(),
+});
+
+const OpenAIChunkSchema = z.object({
+    choices: z.array(z.object({
+        delta: OpenAIDeltaSchema.optional(),
+    })).optional(),
+});
+
+const zodOpenAIExtractor = (data: string) => {
+    const parsed = OpenAIChunkSchema.parse(JSON.parse(data));
+    return parsed.choices?.[0]?.delta?.content ?? "";
+    // parsed é totalmente tipado + validado em runtime
+};
+```
+
+```typescript
+// Opção C — classe abstrata + discriminated union (multi-provedor)
+abstract class ProviderChunk {
+    abstract extractText(): string;
+}
+
+class OpenAIChunk extends ProviderChunk {
+    constructor(private raw: { choices?: Array<{ delta?: { content?: string } }> }) {
+        super();
+    }
+
+    extractText(): string {
+        return this.raw.choices?.[0]?.delta?.content ?? "";
+    }
+}
+
+function chunkFactory(provedor: string, data: string): ProviderChunk {
+    const parsed = JSON.parse(data);
+    if (provedor === "openai" || provedor === "groq" || provedor === "deepseek") {
+        return new OpenAIChunk(parsed);
+    }
+    throw new Error(`Provedor desconhecido: ${provedor}`);
+}
+
+const typedExtractor = (provedor: string) => (data: string) => {
+    return chunkFactory(provedor, data).extractText();
+};
+```
+
+> **Regra de ouro:** todo `JSON.parse(data)` dentro de um extractor deve ser imediatamente seguido de um cast para um tipo conhecido, um schema parse ou uma factory — nunca deixe como `any`.
+
+**Juntando tudo** — um exemplo completo usando interface tipada + `StreamHttpEvent`:
+
+```typescript
+import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
+
+// 1. Defina os tipos de resposta conforme a documentação do provedor
+interface OpenAIChunkDelta {
+    content?: string;
+    role?: string;
+}
+
+interface OpenAIChunkChoice {
+    index: number;
+    delta: OpenAIChunkDelta;
+    finish_reason: string | null;
+}
+interface OpenAIChunk {
+    id: string;
+    object: string;
+    created: number;
+    model: string;
+    choices: OpenAIChunkChoice[];
+}
+
+// 2. Extractor tipado — autocomplete total em `parsed.`
+const typedExtractor = (data: string): string => {
+    const parsed: OpenAIChunk = JSON.parse(data);
+    // TypeScript autocompleta: parsed.id, parsed.choices, parsed.model...
+    return parsed.choices?.[0]?.delta?.content ?? "";
+};
+
+// 3. Use
+const streamer = new StreamHttpEvent();
+streamer.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+});
+
+const stream = await streamer.fetchIA({
+    encodeBytes: true,
+    body: JSON.stringify({
+        model: "gpt-4",
+        messages: [{ role: "user", content: "Olá!" }],
+        stream: true,
+    }),
+    extractor: typedExtractor,
+});
+
+// 4. Leia as respostas tipadas
+const reader = stream.getReader();
+const decoder = new TextDecoder();
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    console.log(decoder.decode(value));
+}
+```
+
+```typescript
+// Versão Zod — mesmo fluxo, com validação em runtime
+import { z } from "zod";
+
+const OpenAIChunkSchema = z.object({
+    choices: z.array(z.object({
+        delta: z.object({ content: z.string().optional() }).optional(),
+    })).optional(),
+});
+
+const zodExtractor = (data: string): string => {
+    const parsed = OpenAIChunkSchema.parse(JSON.parse(data));
+    // Lança ZodError se o formato da resposta não corresponder
+    return parsed.choices?.[0]?.delta?.content ?? "";
 };
 ```
 
