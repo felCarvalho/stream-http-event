@@ -413,6 +413,196 @@ while (true) {
 
 ---
 
+#### Reusable Extractor Functions
+
+Instead of repeating the same extraction logic in every `fetchIA()` call, create reusable extractor functions that can be shared across your application.
+
+```typescript
+// Define extractors once, reuse everywhere
+const openAIExtractor = (data: string) =>
+    JSON.parse(data).choices?.[0]?.delta?.content ?? "";
+
+const anthropicExtractor = (data: string) => {
+    const parsed = JSON.parse(data);
+    if (parsed.type === "content_block_delta") {
+        return parsed.delta?.text ?? "";
+    }
+    return "";
+};
+
+const geminiExtractor = (data: string) => {
+    const parsed = JSON.parse(data);
+    return parsed.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+};
+
+// All OpenAI-compatible providers use the same extractor
+const streamer = new StreamHttpEvent();
+streamer.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+});
+
+// Multiple calls sharing the same extractor
+const stream1 = await streamer.fetchIA({
+    encodeBytes: true,
+    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
+    extractor: openAIExtractor,
+});
+
+const stream2 = await streamer.fetchIA({
+    encodeBytes: true,
+    body: JSON.stringify({ model: "gpt-3.5-turbo", messages: [...], stream: true }),
+    extractor: openAIExtractor, // Same function, no duplication
+});
+```
+
+You can also compose extractors with additional logic:
+
+```typescript
+// Wraps an extractor and filters empty strings
+const nonEmpty = (extractor: (data: string) => string) => (data: string) => {
+    const result = extractor(data);
+    return result.trim() ? result : ""; // Skip empty tokens
+};
+
+const stream = await streamer.fetchIA({
+    encodeBytes: true,
+    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
+    extractor: nonEmpty(openAIExtractor),
+});
+```
+
+**Pro tip:** Extractors can accumulate any data shape — not just text content, but any field from the SSE payload:
+
+```typescript
+// Extract tool calls from OpenAI function-calling responses
+const toolCallExtractor = (data: string) => {
+    const parsed = JSON.parse(data);
+    const delta = parsed.choices?.[0]?.delta;
+    if (delta?.tool_calls?.[0]?.function?.arguments) {
+        return { type: "tool_arguments", data: delta.tool_calls[0].function.arguments };
+    }
+    if (delta?.tool_calls?.[0]?.function?.name) {
+        return { type: "tool_name", data: delta.tool_calls[0].function.name };
+    }
+    if (delta?.content) {
+        return { type: "text", data: delta.content };
+    }
+    return null;
+};
+```
+
+---
+
+#### Dynamic Header Configuration
+
+Instead of hardcoding `dataFetch()` for each provider, build a factory function that receives the provider name and API key, and returns the full configuration dynamically.
+
+```typescript
+type Provider = "openai" | "anthropic" | "groq" | "deepseek" | "gemini";
+
+interface ProviderConfig {
+    url: string;
+    headers: Record<string, string>;
+    timeOut: number;
+}
+
+function createProviderConfig(provider: Provider, apiKey: string, timeout = 30000): ProviderConfig {
+    const configs: Record<Provider, ProviderConfig> = {
+        openai: {
+            url: "https://api.openai.com/v1/chat/completions",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+            },
+            timeOut: timeout,
+        },
+        anthropic: {
+            url: "https://api.anthropic.com/v1/messages",
+            headers: {
+                "Content-Type": "application/json",
+                "x-api-key": apiKey,
+                "anthropic-version": "2023-06-01",
+            },
+            timeOut: timeout,
+        },
+        groq: {
+            url: "https://api.groq.com/openai/v1/chat/completions",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+            },
+            timeOut: timeout,
+        },
+        deepseek: {
+            url: "https://api.deepseek.com/v1/chat/completions",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+            },
+            timeOut: timeout,
+        },
+        gemini: {
+            url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:streamGenerateContent?key=${apiKey}`,
+            headers: { "Content-Type": "application/json" },
+            timeOut: timeout,
+        },
+    };
+    return configs[provider];
+}
+
+// Usage — switch providers by changing one argument
+const provider = "groq";
+const config = createProviderConfig(provider, process.env.GROQ_API_KEY!);
+
+const streamer = new StreamHttpEvent();
+streamer.dataFetch(config);
+
+const stream = await streamer.fetchIA({
+    encodeBytes: true,
+    body: JSON.stringify({ model: "llama3-70b-8192", messages: [...], stream: true }),
+    extractor: openAIExtractor,
+});
+```
+
+You can also build a `streamChat()` helper that encapsulates the full flow:
+
+```typescript
+async function streamChat(
+    provider: Provider,
+    apiKey: string,
+    model: string,
+    messages: { role: string; content: string }[],
+    signal?: AbortSignal,
+): Promise<ReadableStream<Uint8Array>> {
+    const streamer = new StreamHttpEvent();
+    const config = createProviderConfig(provider, apiKey);
+    streamer.dataFetch(config);
+
+    const extractors: Record<Provider, (data: string) => any> = {
+        openai: openAIExtractor,
+        anthropic: anthropicExtractor,
+        groq: openAIExtractor,
+        deepseek: openAIExtractor,
+        gemini: geminiExtractor,
+    };
+
+    return await streamer.fetchIA({
+        encodeBytes: true,
+        body: JSON.stringify({ model, messages, stream: true }),
+        extractor: extractors[provider],
+        signal,
+    });
+}
+
+// One-liner to start streaming from any provider
+const stream = await streamChat("openai", process.env.OPENAI_API_KEY!, "gpt-4", [
+    { role: "user", content: "Explain quantum computing." },
+]);
+```
+
+---
+
 ### Internal Buffer — How It Works
 
 SSE streams are delivered over HTTP as a continuous flow of bytes. Network packets can split a `data:` line mid-stream, so the library uses an **internal buffer** to reconstruct complete lines before processing them.
@@ -955,6 +1145,196 @@ while (true) {
 ```
 
 > **Nota de segurança:** expor chaves de API no navegador é arriscado. Prefira o padrão de proxy com backend (exemplo Express acima) para aplicações em produção.
+
+---
+
+#### Funções de Extração Reutilizáveis
+
+Em vez de repetir a mesma lógica de extração em cada chamada `fetchIA()`, crie funções extratoras reutilizáveis que podem ser compartilhadas por toda a aplicação.
+
+```typescript
+// Defina os extractors uma vez, reutilize em todo lugar
+const openAIExtractor = (data: string) =>
+    JSON.parse(data).choices?.[0]?.delta?.content ?? "";
+
+const anthropicExtractor = (data: string) => {
+    const parsed = JSON.parse(data);
+    if (parsed.type === "content_block_delta") {
+        return parsed.delta?.text ?? "";
+    }
+    return "";
+};
+
+const geminiExtractor = (data: string) => {
+    const parsed = JSON.parse(data);
+    return parsed.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+};
+
+// Todos os provedores compatíveis com OpenAI usam o mesmo extractor
+const streamer = new StreamHttpEvent();
+streamer.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
+});
+
+// Múltiplas chamadas compartilhando o mesmo extractor
+const stream1 = await streamer.fetchIA({
+    encodeBytes: true,
+    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
+    extractor: openAIExtractor,
+});
+
+const stream2 = await streamer.fetchIA({
+    encodeBytes: true,
+    body: JSON.stringify({ model: "gpt-3.5-turbo", messages: [...], stream: true }),
+    extractor: openAIExtractor, // Mesma função, sem duplicação
+});
+```
+
+Você também pode compor extractors com lógica adicional:
+
+```typescript
+// Envolve um extractor e filtra strings vazias
+const naoVazio = (extractor: (data: string) => string) => (data: string) => {
+    const resultado = extractor(data);
+    return resultado.trim() ? resultado : ""; // Pula tokens vazios
+};
+
+const stream = await streamer.fetchIA({
+    encodeBytes: true,
+    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
+    extractor: naoVazio(openAIExtractor),
+});
+```
+
+**Dica:** Extractors podem acumular qualquer formato de dado — não apenas texto, mas qualquer campo do payload SSE:
+
+```typescript
+// Extrai tool calls de respostas function-calling da OpenAI
+const toolCallExtractor = (data: string) => {
+    const parsed = JSON.parse(data);
+    const delta = parsed.choices?.[0]?.delta;
+    if (delta?.tool_calls?.[0]?.function?.arguments) {
+        return { type: "tool_arguments", data: delta.tool_calls[0].function.arguments };
+    }
+    if (delta?.tool_calls?.[0]?.function?.name) {
+        return { type: "tool_name", data: delta.tool_calls[0].function.name };
+    }
+    if (delta?.content) {
+        return { type: "text", data: delta.content };
+    }
+    return null;
+};
+```
+
+---
+
+#### Configuração Dinâmica de Headers
+
+Em vez de codificar `dataFetch()` para cada provedor, construa uma função fábrica que recebe o nome do provedor e a chave de API, e retorna a configuração completa dinamicamente.
+
+```typescript
+type Provedor = "openai" | "anthropic" | "groq" | "deepseek" | "gemini";
+
+interface ConfigProvedor {
+    url: string;
+    headers: Record<string, string>;
+    timeOut: number;
+}
+
+function criarConfigProvedor(provedor: Provedor, apiKey: string, timeout = 30000): ConfigProvedor {
+    const configs: Record<Provedor, ConfigProvedor> = {
+        openai: {
+            url: "https://api.openai.com/v1/chat/completions",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+            },
+            timeOut: timeout,
+        },
+        anthropic: {
+            url: "https://api.anthropic.com/v1/messages",
+            headers: {
+                "Content-Type": "application/json",
+                "x-api-key": apiKey,
+                "anthropic-version": "2023-06-01",
+            },
+            timeOut: timeout,
+        },
+        groq: {
+            url: "https://api.groq.com/openai/v1/chat/completions",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+            },
+            timeOut: timeout,
+        },
+        deepseek: {
+            url: "https://api.deepseek.com/v1/chat/completions",
+            headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${apiKey}`,
+            },
+            timeOut: timeout,
+        },
+        gemini: {
+            url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:streamGenerateContent?key=${apiKey}`,
+            headers: { "Content-Type": "application/json" },
+            timeOut: timeout,
+        },
+    };
+    return configs[provedor];
+}
+
+// Uso — alterne de provedor trocando apenas um argumento
+const provedor = "groq";
+const config = criarConfigProvedor(provedor, process.env.GROQ_API_KEY!);
+
+const streamer = new StreamHttpEvent();
+streamer.dataFetch(config);
+
+const stream = await streamer.fetchIA({
+    encodeBytes: true,
+    body: JSON.stringify({ model: "llama3-70b-8192", messages: [...], stream: true }),
+    extractor: openAIExtractor,
+});
+```
+
+Você também pode criar um helper `streamChat()` que encapsula o fluxo completo:
+
+```typescript
+async function streamChat(
+    provedor: Provedor,
+    apiKey: string,
+    model: string,
+    messages: { role: string; content: string }[],
+    signal?: AbortSignal,
+): Promise<ReadableStream<Uint8Array>> {
+    const streamer = new StreamHttpEvent();
+    const config = criarConfigProvedor(provedor, apiKey);
+    streamer.dataFetch(config);
+
+    const extractors: Record<Provedor, (data: string) => any> = {
+        openai: openAIExtractor,
+        anthropic: anthropicExtractor,
+        groq: openAIExtractor,
+        deepseek: openAIExtractor,
+        gemini: geminiExtractor,
+    };
+
+    return await streamer.fetchIA({
+        encodeBytes: true,
+        body: JSON.stringify({ model, messages, stream: true }),
+        extractor: extractors[provedor],
+        signal,
+    });
+}
+
+// Uma linha para iniciar streaming de qualquer provedor
+const stream = await streamChat("openai", process.env.OPENAI_API_KEY!, "gpt-4", [
+    { role: "user", content: "Explique computação quântica." },
+]);
+```
 
 ---
 
