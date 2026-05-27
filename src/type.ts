@@ -10,11 +10,13 @@ export interface timeOutControlType {
     clearTime: () => void;
 }
 
+export interface extractorType {
+    <T>(data: string): T;
+}
+
 export interface dataFetchType {
     url: string;
     headers?: Record<string, string>;
-    body?: any;
-    extractor: (data: string) => any;
     timeOut?: number;
 }
 
@@ -22,7 +24,7 @@ export interface serializeType {
     buffer: bufferControlType;
     controller: ReadableStreamDefaultController<any>;
     encoder: TextEncoder;
-    extractor: (data: string) => any;
+    extractor?: extractorType;
     encodeBytes: undefined | boolean;
 }
 
@@ -35,9 +37,13 @@ export interface timeoutType {
 export interface streamIaType {
     body: ReadableStream<Uint8Array>;
     encodeBytes: boolean | undefined;
+    extractor?: extractorType;
 }
 
 export interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
+    method?: string;
+    body?: any;
+    extractor?: extractorType;
 }

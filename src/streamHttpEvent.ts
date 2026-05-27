@@ -8,20 +8,14 @@ import type {
     FetchOptions,
 } from "./type.js";
 
-export type { FetchOptions };
-
 export class StreamHttpEvent {
     private url?: string;
     private headers?: Record<string, string> = {};
-    private body?: any;
-    private extractor?: (data: string) => any;
     private timeOut?: number;
 
-    public dataFetch({ url, headers, body, extractor, timeOut }: dataFetchType) {
+    public dataFetch({ url, headers, timeOut }: dataFetchType) {
         this.url = url;
         this.headers = headers ?? {};
-        this.body = body;
-        this.extractor = extractor;
         this.timeOut = timeOut;
     }
 
@@ -99,7 +93,9 @@ export class StreamHttpEvent {
 
                 try {
                     if (cleanData) {
-                        const extracted = extractor(cleanData);
+                        const extracted = extractor
+                            ? extractor(cleanData)
+                            : cleanData;
 
                         if (encodeBytes) {
                             controller.enqueue(
@@ -120,7 +116,7 @@ export class StreamHttpEvent {
         return false;
     }
 
-    private streamIA({ body, encodeBytes }: streamIaType) {
+    private streamIA({ body, encodeBytes, extractor }: streamIaType) {
         if (!body) return null;
         const bodyReader = body.getReader();
         const buffer = this.bufferControl();
@@ -154,8 +150,7 @@ export class StreamHttpEvent {
                             buffer,
                             controller,
                             encoder,
-                            extractor:
-                                this.extractor ?? ((data: string) => data),
+                            extractor: extractor,
                             encodeBytes,
                         });
                         if (isDone) {
@@ -173,15 +168,21 @@ export class StreamHttpEvent {
         });
     }
 
-    public async fetchIA({ encodeBytes, signal }: FetchOptions) {
+    public async fetchIA({
+        encodeBytes,
+        signal,
+        method,
+        body,
+        extractor,
+    }: FetchOptions) {
         if (!this.url) {
-            throw new Error("dataFetch() must be called before fetchIA()");
+            throw new Error("dataFetch() precisa da url do seu provedor de IA");
         }
 
         const fetcher = await fetch(this.url, {
-            method: "POST",
+            method: method ?? "POST",
             headers: this.headers,
-            body: this.body,
+            body: body ?? "{}",
             signal: signal,
         });
 
@@ -190,13 +191,17 @@ export class StreamHttpEvent {
         }
 
         if (!fetcher.body) {
-            throw new Error("No body");
+            throw new Error("Ops, nenhuma corpo de resposta na sua requisição");
         }
 
         const contentType = fetcher.headers.get("content-type") ?? "";
 
         if (contentType?.includes("text/event-stream")) {
-            return this.streamIA({ body: fetcher.body, encodeBytes });
+            return this.streamIA({
+                body: fetcher.body,
+                encodeBytes,
+                extractor,
+            });
         } else {
             return fetcher.json() as Promise<Body>;
         }
