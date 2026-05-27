@@ -256,9 +256,11 @@ const stream = await streamer.fetchIA({
 
 #### Express.js endpoint — relay AI stream to browser
 
+The lib with `encodeBytes: false` outputs clean JSON strings — no SSE wrapping needed. Just write each chunk with a `\n` delimiter.
+
 ```typescript
 app.get("/chat", async (req, res) => {
-    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
@@ -279,7 +281,7 @@ app.get("/chat", async (req, res) => {
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            res.write(`data: ${JSON.stringify({ content: value })}\n\n`);
+            res.write(value + "\n"); // value is already JSON.stringify'd by the lib
         }
     } finally {
         res.end();
@@ -292,12 +294,13 @@ app.get("/chat", async (req, res) => {
 
 #### Browser — consume AI stream from the frontend
 
-The library works in the browser (targets `DOM` + `ES2020`). Below are examples of consuming the stream on the client side.
+The library works in the browser (targets `DOM` + `ES2020`). Each chunk from the lib is already a `JSON.stringify(extracted)` string — no SSE parsing, no `TextDecoder`.
 
-##### Vanilla JS — fetch + ReadableStream
+##### Vanilla JS — fetch the Express endpoint
+
+The backend writes newline-delimited JSON strings (see Express example above). The frontend splits by `\n` and parses each line.
 
 ```typescript
-// The backend exposes the AI stream at /chat (see Express example above)
 const response = await fetch("/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -313,13 +316,10 @@ while (true) {
     if (done) break;
 
     const text = decoder.decode(value, { stream: true });
-    const lines = text.split("\n");
+    const lines = text.split("\n").filter(Boolean);
 
     for (const line of lines) {
-        if (line.startsWith("data: ")) {
-            const json = JSON.parse(line.slice(6));
-            outputEl.textContent += json.content; // append token to DOM
-        }
+        outputEl.textContent += JSON.parse(line); // line = '"token text"', parse gives raw string
     }
 }
 ```
@@ -352,13 +352,10 @@ function Chat() {
             if (done) break;
 
             const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split("\n");
+            const lines = chunk.split("\n").filter(Boolean);
 
             for (const line of lines) {
-                if (line.startsWith("data: ")) {
-                    const json = JSON.parse(line.slice(6));
-                    setText((prev) => prev + json.content); // incremental render
-                }
+                setText((prev) => prev + JSON.parse(line));
             }
         }
     };
@@ -377,7 +374,7 @@ function Chat() {
 
 ##### Using the lib directly in the browser
 
-You can also call AI providers straight from the browser — no backend needed:
+No backend needed — `StreamHttpEvent` calls the AI provider straight from the browser. Each `reader.read()` returns a `JSON.stringify(extracted)` string.
 
 ```typescript
 import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
@@ -407,7 +404,7 @@ const output = document.getElementById("output")!;
 while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    output.textContent += value; // value is already a string
+    output.textContent += JSON.parse(value); // value = '"hello"', parse gives "hello"
 }
 ```
 
@@ -805,9 +802,11 @@ const stream = await streamer.fetchIA({
 
 #### Endpoint Express.js — retransmitir stream da IA para o navegador
 
+Com `encodeBytes: false` a lib entrega strings JSON limpas — sem necessidade de empacotar em SSE. Basta escrever cada chunk com delimitador `\n`.
+
 ```typescript
 app.get("/chat", async (req, res) => {
-    res.setHeader("Content-Type", "text/event-stream");
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Connection", "keep-alive");
 
@@ -828,7 +827,7 @@ app.get("/chat", async (req, res) => {
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            res.write(`data: ${JSON.stringify({ content: value })}\n\n`);
+            res.write(value + "\n"); // value já veio JSON.stringify'd pela lib
         }
     } finally {
         res.end();
@@ -841,12 +840,13 @@ app.get("/chat", async (req, res) => {
 
 #### Navegador — consumir stream da IA no frontend
 
-A biblioteca funciona no navegador (target `DOM` + `ES2020`). Abaixo exemplos de consumo no lado do cliente.
+A biblioteca funciona no navegador (target `DOM` + `ES2020`). Cada chunk da lib já é uma string `JSON.stringify(extracted)` — sem parse de SSE, sem `TextDecoder`.
 
-##### Vanilla JS — fetch + ReadableStream
+##### Vanilla JS — consumir o endpoint Express
+
+O backend escreve strings JSON delimitadas por `\n` (veja o exemplo Express acima). O frontend divide por `\n` e faz parse de cada linha.
 
 ```typescript
-// O backend expõe o stream da IA em /chat (veja o exemplo Express acima)
 const response = await fetch("/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -862,13 +862,10 @@ while (true) {
     if (done) break;
 
     const text = decoder.decode(value, { stream: true });
-    const lines = text.split("\n");
+    const lines = text.split("\n").filter(Boolean);
 
     for (const line of lines) {
-        if (line.startsWith("data: ")) {
-            const json = JSON.parse(line.slice(6));
-            outputEl.textContent += json.content; // anexa token ao DOM
-        }
+        outputEl.textContent += JSON.parse(line); // line = '"token text"', parse devolve string
     }
 }
 ```
@@ -901,13 +898,10 @@ function Chat() {
             if (done) break;
 
             const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split("\n");
+            const lines = chunk.split("\n").filter(Boolean);
 
             for (const line of lines) {
-                if (line.startsWith("data: ")) {
-                    const json = JSON.parse(line.slice(6));
-                    setText((prev) => prev + json.content); // render incremental
-                }
+                setText((prev) => prev + JSON.parse(line));
             }
         }
     };
@@ -926,7 +920,7 @@ function Chat() {
 
 ##### Usando a lib direto no navegador
 
-Também é possível chamar os provedores de IA direto do navegador — sem backend:
+Sem backend — `StreamHttpEvent` chama o provedor de IA direto do navegador. Cada `reader.read()` devolve uma string `JSON.stringify(extracted)`.
 
 ```typescript
 import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
@@ -956,7 +950,7 @@ const output = document.getElementById("output")!;
 while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    output.textContent += value; // value já é string
+    output.textContent += JSON.parse(value); // value = '"olá"', parse devolve "olá"
 }
 ```
 
