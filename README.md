@@ -105,7 +105,7 @@ Throws an error if `dataFetch()` was not called beforehand.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `encodeBytes` | `boolean` | No | If `true`, each extracted chunk is `JSON.stringify()`-ed, suffixed with `\n`, and encoded as `Uint8Array`. If `false` or omitted, values are enqueued as plain strings. |
+| `encodeBytes` | `boolean` | No | If `true`, each extracted chunk is `JSON.stringify()`-ed, suffixed with `\n`, and encoded as `Uint8Array`. If `false` or omitted, the same `JSON.stringify()`-ed value is enqueued as a plain string (no trailing `\n`). |
 | `signal` | `AbortSignal` | No | Passed to the underlying `fetch()` call. Aborting the signal cancels the HTTP request and the stream reader. |
 | `method` | `string` | No | HTTP method for the request. Defaults to `"POST"`. |
 | `body` | `any` | No | Request body. Typically `JSON.stringify(...)`. Defaults to `"{}"`. |
@@ -549,8 +549,6 @@ Both `error()` and `cancel()` together kill the connection to the AI provider.
 
 ---
 
----
-
 ## Português
 
 Uma biblioteca TypeScript leve para consumir **Server-Sent Events (SSE)** sobre HTTP — criada para respostas em streaming de APIs de IA/LLM.
@@ -652,7 +650,7 @@ Lança erro se `dataFetch()` não tiver sido chamado antes.
 
 | Parâmetro | Tipo | Obrigatório | Descrição |
 |-----------|------|-------------|-----------|
-| `encodeBytes` | `boolean` | Não | Se `true`, cada chunk é serializado com `JSON.stringify()`, sufixado com `\n` e codificado como `Uint8Array`. Se `false` ou omitido, os valores são enfileirados como strings. |
+| `encodeBytes` | `boolean` | Não | Se `true`, cada chunk é serializado com `JSON.stringify()`, sufixado com `\n` e codificado como `Uint8Array`. Se `false` ou omitido, o mesmo valor `JSON.stringify()` é enfileirado como string (sem `\n` no final). |
 | `signal` | `AbortSignal` | Não | Repassado ao `fetch()` interno. Abortar o sinal cancela a requisição HTTP e o leitor do stream. |
 | `method` | `string` | Não | Método HTTP da requisição. Padrão `"POST"`. |
 | `body` | `any` | Não | Corpo da requisição. Normalmente `JSON.stringify(...)`. Padrão `"{}"`. |
