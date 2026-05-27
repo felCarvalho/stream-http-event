@@ -115,7 +115,7 @@ Throws an error if `dataFetch()` was not called beforehand.
 
 ### Usage Examples
 
-Provider examples use `encodeBytes: true` — each chunk is a `Uint8Array` with `\n` delimiter, ready for piping or file writes. For frontend consumption see the [Browser](#browser--consume-ai-stream-from-the-frontend) section.
+Provider and relay examples use `encodeBytes: true` — chunks travel as `Uint8Array` between services, decoded only at the final consumer. Use `encodeBytes: false` only when the stream is consumed directly at the same layer (e.g. browser calling the provider directly).
 
 #### OpenAI (ChatGPT / GPT-4)
 
@@ -257,7 +257,7 @@ const stream = await streamer.fetchIA({
 
 #### Express.js endpoint — relay AI stream to browser
 
-The lib with `encodeBytes: false` outputs clean JSON strings — no SSE wrapping needed. Just write each chunk with a `\n` delimiter.
+Use `encodeBytes: true` — the backend passes `Uint8Array` chunks directly to `res.write()`, keeping data encoded during transport. The browser decodes at the final step.
 
 ```typescript
 app.get("/chat", async (req, res) => {
@@ -272,7 +272,7 @@ app.get("/chat", async (req, res) => {
     });
 
     const stream = await streamer.fetchIA({
-        encodeBytes: false,
+        encodeBytes: true,
         body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
         extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
     });
@@ -282,7 +282,7 @@ app.get("/chat", async (req, res) => {
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            res.write(value + "\n"); // value is already JSON.stringify'd by the lib
+            res.write(value); // value is Uint8Array — pass bytes directly
         }
     } finally {
         res.end();
@@ -295,11 +295,11 @@ app.get("/chat", async (req, res) => {
 
 #### Browser — consume AI stream from the frontend
 
-The library works in the browser (targets `DOM` + `ES2020`). Each chunk from the lib is already a `JSON.stringify(extracted)` string — no SSE parsing, no `TextDecoder`.
+The library works in the browser (targets `DOM` + `ES2020`).
 
 ##### Vanilla JS — fetch the Express endpoint
 
-The backend writes newline-delimited JSON strings (see Express example above). The frontend splits by `\n` and parses each line.
+The backend sends `Uint8Array` chunks. The browser uses `TextDecoder` to decode, then splits by `\n` and parses.
 
 ```typescript
 const response = await fetch("/chat", {
@@ -320,7 +320,7 @@ while (true) {
     const lines = text.split("\n").filter(Boolean);
 
     for (const line of lines) {
-        outputEl.textContent += JSON.parse(line); // line = '"token text"', parse gives raw string
+        outputEl.textContent += JSON.parse(line);
     }
 }
 ```
@@ -375,7 +375,7 @@ function Chat() {
 
 ##### Using the lib directly in the browser
 
-No backend needed — `StreamHttpEvent` calls the AI provider straight from the browser. Each `reader.read()` returns a `JSON.stringify(extracted)` string.
+No backend needed — `StreamHttpEvent` calls the AI provider straight from the browser. With `encodeBytes: false` each chunk is a string, no `TextDecoder`.
 
 ```typescript
 import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
@@ -405,7 +405,7 @@ const output = document.getElementById("output")!;
 while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    output.textContent += JSON.parse(value); // value = '"hello"', parse gives "hello"
+    output.textContent += JSON.parse(value);
 }
 ```
 
@@ -662,7 +662,7 @@ Lança erro se `dataFetch()` não tiver sido chamado antes.
 
 ### Exemplos de Uso
 
-Exemplos de providers usam `encodeBytes: true` — cada chunk é um `Uint8Array` com delimitador `\n`, pronto para pipe ou escrita em arquivo. Para consumo no frontend veja a seção [Navegador](#navegador--consumir-stream-da-ia-no-frontend).
+Exemplos de provider e relay usam `encodeBytes: true` — os chunks trafegam como `Uint8Array` entre serviços, decodificados apenas no consumidor final. Use `encodeBytes: false` somente quando o stream é consumido diretamente na mesma camada (ex.: navegador chamando o provider direto).
 
 #### OpenAI (ChatGPT / GPT-4)
 
@@ -804,7 +804,7 @@ const stream = await streamer.fetchIA({
 
 #### Endpoint Express.js — retransmitir stream da IA para o navegador
 
-Com `encodeBytes: false` a lib entrega strings JSON limpas — sem necessidade de empacotar em SSE. Basta escrever cada chunk com delimitador `\n`.
+Use `encodeBytes: true` — o backend repassa `Uint8Array` direto para `res.write()`, mantendo os dados codificados durante o transporte. O navegador decodifica no destino final.
 
 ```typescript
 app.get("/chat", async (req, res) => {
@@ -819,7 +819,7 @@ app.get("/chat", async (req, res) => {
     });
 
     const stream = await streamer.fetchIA({
-        encodeBytes: false,
+        encodeBytes: true,
         body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
         extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
     });
@@ -829,7 +829,7 @@ app.get("/chat", async (req, res) => {
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
-            res.write(value + "\n"); // value já veio JSON.stringify'd pela lib
+            res.write(value); // value é Uint8Array — repassa os bytes diretamente
         }
     } finally {
         res.end();
@@ -842,11 +842,11 @@ app.get("/chat", async (req, res) => {
 
 #### Navegador — consumir stream da IA no frontend
 
-A biblioteca funciona no navegador (target `DOM` + `ES2020`). Cada chunk da lib já é uma string `JSON.stringify(extracted)` — sem parse de SSE, sem `TextDecoder`.
+A biblioteca funciona no navegador (target `DOM` + `ES2020`).
 
 ##### Vanilla JS — consumir o endpoint Express
 
-O backend escreve strings JSON delimitadas por `\n` (veja o exemplo Express acima). O frontend divide por `\n` e faz parse de cada linha.
+O backend envia chunks `Uint8Array`. O navegador usa `TextDecoder` para decodificar, depois divide por `\n` e faz parse.
 
 ```typescript
 const response = await fetch("/chat", {
@@ -867,7 +867,7 @@ while (true) {
     const lines = text.split("\n").filter(Boolean);
 
     for (const line of lines) {
-        outputEl.textContent += JSON.parse(line); // line = '"token text"', parse devolve string
+        outputEl.textContent += JSON.parse(line);
     }
 }
 ```
@@ -922,7 +922,7 @@ function Chat() {
 
 ##### Usando a lib direto no navegador
 
-Sem backend — `StreamHttpEvent` chama o provedor de IA direto do navegador. Cada `reader.read()` devolve uma string `JSON.stringify(extracted)`.
+Sem backend — `StreamHttpEvent` chama o provedor de IA direto do navegador. Com `encodeBytes: false` cada chunk é string, sem `TextDecoder`.
 
 ```typescript
 import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
@@ -952,7 +952,7 @@ const output = document.getElementById("output")!;
 while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    output.textContent += JSON.parse(value); // value = '"olá"', parse devolve "olá"
+    output.textContent += JSON.parse(value);
 }
 ```
 
