@@ -413,11 +413,48 @@ while (true) {
 
 ---
 
-**Reusable extractors** — define extraction functions once and reuse them across multiple `fetchIA()` calls. Providers like Groq and DeepSeek (OpenAI-compatible) can share the same extractor. You can also compose wrapper functions around extractors for filtering or post-processing, and extract different data shapes (e.g. tool calls from function-calling responses) by returning structured objects instead of plain strings.
+**Reusable extractors** — define extraction functions once and reuse them across multiple `fetchIA()` calls. Providers like Groq and DeepSeek (OpenAI-compatible) can share the same extractor. You can also compose wrapper functions around extractors for filtering or post-processing, and extract different data shapes by returning structured objects instead of plain strings.
+
+```typescript
+const openAIExtractor = (data: string) =>
+    JSON.parse(data).choices?.[0]?.delta?.content ?? "";
+
+// Extract tool calls from function-calling responses
+const toolCallExtractor = (data: string) => {
+    const delta = JSON.parse(data).choices?.[0]?.delta;
+    if (delta?.tool_calls?.[0]?.function?.arguments) {
+        return { type: "tool_args", data: delta.tool_calls[0].function.arguments };
+    }
+    if (delta?.content) return { type: "text", data: delta.content };
+    return null;
+};
+```
 
 **Typed extractors** — `JSON.parse()` returns `any`, so properties don't offer autocomplete. Define your own interfaces and cast with `const parsed: MyType = JSON.parse(data)`. For multi-provider apps, consider an abstract class with a discriminated union; for runtime validation, use a schema library like Zod.
 
-**Dynamic headers** — instead of hardcoding `dataFetch()` per provider, build a factory that receives the provider name and API key and returns `{ url, headers, timeOut }`. This lets you switch providers by changing a single argument. You can wrap the full flow (config + extractor selection + fetchIA) into a helper like `streamChat(provider, apiKey, model, messages)`.
+```typescript
+interface OpenAIChunk { choices?: Array<{ delta?: { content?: string } }> }
+
+const typedExtractor = (data: string) => {
+    const parsed: OpenAIChunk = JSON.parse(data); // autocomplete on parsed.*
+    return parsed.choices?.[0]?.delta?.content ?? "";
+};
+```
+
+**Dynamic headers** — instead of hardcoding `dataFetch()` per provider, build a factory that receives the provider name and API key and returns `{ url, headers, timeOut }`. This lets you switch providers by changing a single argument. You can wrap the full flow into a helper like `streamChat(provider, apiKey, model, messages)`.
+
+```typescript
+function createProviderConfig(provider: string, apiKey: string) {
+    const configs: Record<string, { url: string; headers: Record<string, string> }> = {
+        openai:  { url: "https://api.openai.com/v1/chat/completions",      headers: { Authorization: `Bearer ${apiKey}` } },
+        anthropic: { url: "https://api.anthropic.com/v1/messages",          headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" } },
+        groq:    { url: "https://api.groq.com/openai/v1/chat/completions",  headers: { Authorization: `Bearer ${apiKey}` } },
+    };
+    return configs[provider];
+}
+
+streamer.dataFetch(createProviderConfig("groq", process.env.GROQ_API_KEY!));
+```
 
 ---
 
@@ -966,11 +1003,48 @@ while (true) {
 
 ---
 
-**Extractors reutilizáveis** — defina as funções de extração uma vez e reutilize em múltiplas chamadas `fetchIA()`. Provedores compatíveis com OpenAI (Groq, DeepSeek) podem compartilhar o mesmo extractor. Também é possível compor wrappers em volta dos extractors para filtros ou pós-processamento, e extrair formatos diferentes de dado (ex.: tool calls de function-calling) retornando objetos estruturados em vez de strings.
+**Extractors reutilizáveis** — defina as funções de extração uma vez e reutilize em múltiplas chamadas `fetchIA()`. Provedores compatíveis com OpenAI (Groq, DeepSeek) podem compartilhar o mesmo extractor. Também é possível compor wrappers em volta dos extractors para filtros ou pós-processamento, e extrair formatos diferentes de dado retornando objetos estruturados em vez de strings.
+
+```typescript
+const openAIExtractor = (data: string) =>
+    JSON.parse(data).choices?.[0]?.delta?.content ?? "";
+
+// Extrai tool calls de respostas function-calling
+const toolCallExtractor = (data: string) => {
+    const delta = JSON.parse(data).choices?.[0]?.delta;
+    if (delta?.tool_calls?.[0]?.function?.arguments) {
+        return { type: "tool_args", data: delta.tool_calls[0].function.arguments };
+    }
+    if (delta?.content) return { type: "text", data: delta.content };
+    return null;
+};
+```
 
 **Extractors tipados** — `JSON.parse()` retorna `any`, então propriedades não oferecem autocomplete. Defina suas próprias interfaces e faça cast com `const parsed: MeuTipo = JSON.parse(data)`. Para apps multi-provedor, considere uma classe abstrata com discriminated union; para validação em runtime, use uma lib de schema como Zod.
 
-**Headers dinâmicos** — em vez de codificar `dataFetch()` por provedor, crie uma fábrica que recebe o nome do provedor e a API key e retorna `{ url, headers, timeOut }`. Assim você troca de provedor mudando um único argumento. Dá para encapsular o fluxo completo (config + seleção de extractor + fetchIA) em um helper como `streamChat(provedor, apiKey, model, messages)`.
+```typescript
+interface OpenAIChunk { choices?: Array<{ delta?: { content?: string } }> }
+
+const typedExtractor = (data: string) => {
+    const parsed: OpenAIChunk = JSON.parse(data); // autocomplete em parsed.*
+    return parsed.choices?.[0]?.delta?.content ?? "";
+};
+```
+
+**Headers dinâmicos** — em vez de codificar `dataFetch()` por provedor, crie uma fábrica que recebe o nome do provedor e a API key e retorna `{ url, headers, timeOut }`. Assim você troca de provedor mudando um único argumento. Dá para encapsular o fluxo completo em um helper como `streamChat(provedor, apiKey, model, messages)`.
+
+```typescript
+function criarConfigProvedor(provedor: string, apiKey: string) {
+    const configs: Record<string, { url: string; headers: Record<string, string> }> = {
+        openai:    { url: "https://api.openai.com/v1/chat/completions",      headers: { Authorization: `Bearer ${apiKey}` } },
+        anthropic: { url: "https://api.anthropic.com/v1/messages",          headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" } },
+        groq:      { url: "https://api.groq.com/openai/v1/chat/completions",  headers: { Authorization: `Bearer ${apiKey}` } },
+    };
+    return configs[provedor];
+}
+
+streamer.dataFetch(criarConfigProvedor("groq", process.env.GROQ_API_KEY!));
+```
 
 ---
 
