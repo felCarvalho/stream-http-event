@@ -13,7 +13,7 @@ Uma biblioteca TypeScript leve para consumir **Server-Sent Events (SSE)** sobre 
 - Método HTTP configurável (padrão `POST`), headers e body
 - Faz parse de respostas `text/event-stream` (SSE) em tempo real via `ReadableStream`
 - Lida com chunks parciais/incompletos com um buffer interno
-- **Extractor** definido pelo usuário para transformar linhas `data:` em objetos estruturados (opcional, fallback para dado bruto)
+- **Extractor** em array definido pelo usuário — funções aplicadas via `reduce` para transformar linhas `data:` em objetos estruturados (opcional, fallback para dado bruto)
 - Detecta `[DONE]` como sinal de término do stream
 - `timeOut` opcional para abortar conexões travadas (reseta a cada chunk recebido)
 - Opcionalmente codifica a saída em `Uint8Array`
@@ -52,10 +52,12 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Olá!" }],
         stream: true,
     }),
-    extractor: (rawData: string) => {
-        const parsed = JSON.parse(rawData);
-        return parsed.choices?.[0]?.delta?.content ?? "";
-    },
+    extractor: [
+        (rawData: string) => {
+            const parsed = JSON.parse(rawData);
+            return parsed.choices?.[0]?.delta?.content ?? "";
+        },
+    ],
 });
 
 // 3. Ler do stream
@@ -97,9 +99,9 @@ Configura os parâmetros estáticos da requisição. **Deve ser chamado antes de
 
 ---
 
-##### `fetchIA(options): Promise<ReadableStream<Uint8Array> | null | Body>`
+##### `fetchIA<O>(options): Promise<ReadableStream<O> | O>`
 
-Executa a requisição HTTP. Se o `Content-Type` for `text/event-stream`, retorna uma `ReadableStream` com os eventos processados. Caso contrário, faz fallback para `response.json()`.
+Executa a requisição HTTP. Se o `Content-Type` for `text/event-stream`, retorna uma `ReadableStream<O>` com os eventos processados. Caso contrário, faz fallback para `response.json()`.
 
 Lança erro se `dataFetch()` não tiver sido chamado antes.
 
@@ -109,7 +111,9 @@ Lança erro se `dataFetch()` não tiver sido chamado antes.
 | `signal` | `AbortSignal` | Não | Repassado ao `fetch()` interno. Abortar o sinal cancela a requisição HTTP e o leitor do stream. |
 | `method` | `string` | Não | Método HTTP da requisição. Padrão `"POST"`. |
 | `body` | `any` | Não | Corpo da requisição. Normalmente `JSON.stringify(...)`. Padrão `"{}"`. |
-| `extractor` | `(data: string) => any` | Não | Transforma cada linha `data:` no formato de saída desejado. Se omitido, o conteúdo bruto do `data:` é enfileirado como está. |
+| `extractor` | `Array<(data: any) => any>` | Não | Array de funções aplicadas via `reduce` sobre cada linha `data:`. A saída de uma função é a entrada da próxima. Se omitido, o conteúdo bruto do `data:` é enfileirado como está. |
+
+> **Tipagem:** `fetchIA<O>()` recebe o tipo de saída esperado como genérico. Os extractors transformam o JSON cru em `O`. O autocomplete flui do genérico `O` para o `ReadableStream<O>` ou `Promise<O>` retornado.
 
 ---
 
@@ -138,7 +142,9 @@ const stream = await streamer.fetchIA({
         stream: true,
         temperature: 0.7,
     }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    extractor: [
+        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    ],
 });
 ```
 
@@ -164,13 +170,15 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Explique computação quântica." }],
         stream: true,
     }),
-    extractor: (data) => {
-        const parsed = JSON.parse(data);
-        if (parsed.type === "content_block_delta") {
-            return parsed.delta?.text ?? "";
-        }
-        return "";
-    },
+    extractor: [
+        (data) => {
+            const parsed = JSON.parse(data);
+            if (parsed.type === "content_block_delta") {
+                return parsed.delta?.text ?? "";
+            }
+            return "";
+        },
+    ],
 });
 ```
 
@@ -189,10 +197,12 @@ const stream = await streamer.fetchIA({
     body: JSON.stringify({
         contents: [{ parts: [{ text: "Explique computação quântica." }] }],
     }),
-    extractor: (data) => {
-        const parsed = JSON.parse(data);
-        return parsed.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-    },
+    extractor: [
+        (data) => {
+            const parsed = JSON.parse(data);
+            return parsed.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+        },
+    ],
 });
 ```
 
@@ -214,7 +224,9 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Explique computação quântica." }],
         stream: true,
     }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    extractor: [
+        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    ],
 });
 ```
 
@@ -236,7 +248,9 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Explique computação quântica." }],
         stream: true,
     }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    extractor: [
+        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    ],
 });
 ```
 
@@ -250,7 +264,9 @@ const stream = await streamer.fetchIA({
     encodeBytes: true,
     signal: controller.signal,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    extractor: [
+        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    ],
 });
 // stream.getReader().read() rejeitará com AbortError após 10s
 ```
@@ -274,7 +290,9 @@ app.get("/chat", async (req, res) => {
     const stream = await streamer.fetchIA({
         encodeBytes: true,
         body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-        extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+        extractor: [
+            (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+        ],
     });
 
     const reader = stream.getReader();
@@ -396,7 +414,9 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Olá!" }],
         stream: true,
     }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    extractor: [
+        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    ],
 });
 
 const reader = stream.getReader();
@@ -413,14 +433,23 @@ while (true) {
 
 ---
 
-**Extractors reutilizáveis** — defina as funções de extração uma vez e reutilize em múltiplas chamadas `fetchIA()`. Provedores compatíveis com OpenAI (Groq, DeepSeek) podem compartilhar o mesmo extractor. Também é possível compor wrappers em volta dos extractors para filtros ou pós-processamento, e extrair formatos diferentes de dado retornando objetos estruturados em vez de strings.
+**Extractors reutilizáveis** — defina as funções de extração uma vez e passe-as como array em múltiplas chamadas `fetchIA()`. Provedores compatíveis com OpenAI (Groq, DeepSeek) podem compartilhar o mesmo extractor. Também é possível encadear múltiplas funções — a saída de uma vira entrada da próxima via `reduce`.
 
 ```typescript
-const openAIExtractor = (data: string) =>
+const openAIExtractor = (data: any) =>
     JSON.parse(data).choices?.[0]?.delta?.content ?? "";
 
+const sanitizeExtractor = (text: string) => text.trim();
+
+// Uso em array — aplicado em ordem
+const stream = await streamer.fetchIA({
+    encodeBytes: true,
+    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
+    extractor: [openAIExtractor, sanitizeExtractor],
+});
+
 // Extrai tool calls de respostas function-calling
-const toolCallExtractor = (data: string) => {
+const toolCallExtractor = (data: any) => {
     const delta = JSON.parse(data).choices?.[0]?.delta;
     if (delta?.tool_calls?.[0]?.function?.arguments) {
         return { type: "tool_args", data: delta.tool_calls[0].function.arguments };
@@ -430,15 +459,26 @@ const toolCallExtractor = (data: string) => {
 };
 ```
 
-**Extractors tipados** — `JSON.parse()` retorna `any`, então propriedades não oferecem autocomplete. Defina suas próprias interfaces e faça cast com `const parsed: MeuTipo = JSON.parse(data)`. Para apps multi-provedor, considere uma classe abstrata com discriminated union; para validação em runtime, use uma lib de schema como Zod.
+**Extractors tipados** — em vez de tipar internamente cada extrator, use o genérico `fetchIA<O>()`. A interface `O` define o formato de saída esperado e o autocomplete flui direto no `ReadableStream<O>` retornado.
 
 ```typescript
-interface OpenAIChunk { choices?: Array<{ delta?: { content?: string } }> }
+interface TokenChunk { content: string }
 
-const typedExtractor = (data: string) => {
-    const parsed: OpenAIChunk = JSON.parse(data); // autocomplete em parsed.*
-    return parsed.choices?.[0]?.delta?.content ?? "";
-};
+const stream = await streamer.fetchIA<TokenChunk>({
+    encodeBytes: true,
+    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
+    extractor: [
+        (data) => JSON.parse(data).choices?.[0]?.delta ?? { content: "" },
+    ],
+});
+
+const reader = stream.getReader();
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    // value é TokenChunk — autocomplete em value.content
+    console.log(value.content);
+}
 ```
 
 **Headers dinâmicos** — em vez de codificar `dataFetch()` por provedor, crie uma fábrica que recebe o nome do provedor e a API key e retorna `{ url, headers, timeOut }`. Assim você troca de provedor mudando um único argumento. Dá para encapsular o fluxo completo em um helper como `streamChat(provedor, apiKey, model, messages)`.
@@ -577,7 +617,8 @@ lines.pop() → volta ao buffer → guarda linha incompleta para o próximo chun
 para cada linha completa:
   linha vazia?      → pula
   contém [DONE]?    → fecha stream, retorna
-  começa com data:? → remove prefixo, chama extractor (ou usa raw)
+  começa com data:? → remove prefixo, faz JSON.parse
+                       extractor? → reduce(extractor, parsedData) encadeia funções
                        encodeBytes?
                          true  → enqueue Uint8Array com \n no final
                          false → enqueue string pura
@@ -609,7 +650,7 @@ A lightweight TypeScript library for consuming **Server-Sent Events (SSE)** over
 - Configurable HTTP method (defaults to `POST`), headers and body
 - Parses `text/event-stream` (SSE) responses in real-time via `ReadableStream`
 - Handles partial/incomplete chunks across network boundaries with an internal buffer
-- User-defined **extractor** to transform raw `data:` lines into structured objects (optional, falls back to raw data)
+- User-defined **extractor** array — functions applied via `reduce` to transform raw `data:` lines into structured objects (optional, falls back to raw data)
 - Detects `[DONE]` as the stream termination signal
 - Optional `timeOut` to abort hanging connections (resets on each received chunk)
 - Optionally encodes output as `Uint8Array` bytes (ideal for piping into further streams)
@@ -648,10 +689,12 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Hello!" }],
         stream: true,
     }),
-    extractor: (rawData: string) => {
-        const parsed = JSON.parse(rawData);
-        return parsed.choices?.[0]?.delta?.content ?? "";
-    },
+    extractor: [
+        (rawData: string) => {
+            const parsed = JSON.parse(rawData);
+            return parsed.choices?.[0]?.delta?.content ?? "";
+        },
+    ],
 });
 
 // 3. Read from the stream
@@ -693,9 +736,9 @@ Configures the static request parameters. **Must be called before `fetchIA()`.**
 
 ---
 
-##### `fetchIA(options): Promise<ReadableStream<Uint8Array> | null | Body>`
+##### `fetchIA<O>(options): Promise<ReadableStream<O> | O>`
 
-Executes the HTTP request. If the response `Content-Type` is `text/event-stream`, returns a `ReadableStream` with parsed events. Otherwise, falls back to `response.json()`.
+Executes the HTTP request. If the response `Content-Type` is `text/event-stream`, returns a `ReadableStream<O>` with parsed events. Otherwise, falls back to `response.json()`.
 
 Throws an error if `dataFetch()` was not called beforehand.
 
@@ -705,7 +748,9 @@ Throws an error if `dataFetch()` was not called beforehand.
 | `signal` | `AbortSignal` | No | Passed to the underlying `fetch()` call. Aborting the signal cancels the HTTP request and the stream reader. |
 | `method` | `string` | No | HTTP method for the request. Defaults to `"POST"`. |
 | `body` | `any` | No | Request body. Typically `JSON.stringify(...)`. Defaults to `"{}"`. |
-| `extractor` | `(data: string) => any` | No | Transforms each parsed `data:` line into the desired output format. If omitted, the raw `data:` content is enqueued as-is. |
+| `extractor` | `Array<(data: any) => any>` | No | Array of functions applied via `reduce` over each `data:` line. Output of one function becomes input of the next. If omitted, the raw `data:` content is enqueued as-is. |
+
+> **Typing:** `fetchIA<O>()` accepts the expected output type as a generic. Extractors transform raw JSON into `O`. Autocomplete flows from the `O` generic into the returned `ReadableStream<O>` or `Promise<O>`.
 
 ---
 
@@ -734,7 +779,9 @@ const stream = await streamer.fetchIA({
         stream: true,
         temperature: 0.7,
     }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    extractor: [
+        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    ],
 });
 ```
 
@@ -760,13 +807,15 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Explain quantum computing." }],
         stream: true,
     }),
-    extractor: (data) => {
-        const parsed = JSON.parse(data);
-        if (parsed.type === "content_block_delta") {
-            return parsed.delta?.text ?? "";
-        }
-        return "";
-    },
+    extractor: [
+        (data) => {
+            const parsed = JSON.parse(data);
+            if (parsed.type === "content_block_delta") {
+                return parsed.delta?.text ?? "";
+            }
+            return "";
+        },
+    ],
 });
 ```
 
@@ -785,10 +834,12 @@ const stream = await streamer.fetchIA({
     body: JSON.stringify({
         contents: [{ parts: [{ text: "Explain quantum computing." }] }],
     }),
-    extractor: (data) => {
-        const parsed = JSON.parse(data);
-        return parsed.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-    },
+    extractor: [
+        (data) => {
+            const parsed = JSON.parse(data);
+            return parsed.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
+        },
+    ],
 });
 ```
 
@@ -810,7 +861,9 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Explain quantum computing." }],
         stream: true,
     }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    extractor: [
+        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    ],
 });
 ```
 
@@ -832,7 +885,9 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Explain quantum computing." }],
         stream: true,
     }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    extractor: [
+        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    ],
 });
 ```
 
@@ -846,7 +901,9 @@ const stream = await streamer.fetchIA({
     encodeBytes: true,
     signal: controller.signal,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    extractor: [
+        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    ],
 });
 // stream.getReader().read() will reject with AbortError after 10s
 ```
@@ -870,7 +927,9 @@ app.get("/chat", async (req, res) => {
     const stream = await streamer.fetchIA({
         encodeBytes: true,
         body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-        extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+        extractor: [
+            (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+        ],
     });
 
     const reader = stream.getReader();
@@ -992,7 +1051,9 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Hello!" }],
         stream: true,
     }),
-    extractor: (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    extractor: [
+        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+    ],
 });
 
 const reader = stream.getReader();
@@ -1009,14 +1070,23 @@ while (true) {
 
 ---
 
-**Reusable extractors** — define extraction functions once and reuse them across multiple `fetchIA()` calls. Providers like Groq and DeepSeek (OpenAI-compatible) can share the same extractor. You can also compose wrapper functions around extractors for filtering or post-processing, and extract different data shapes by returning structured objects instead of plain strings.
+**Reusable extractors** — define extraction functions once and pass them as an array across multiple `fetchIA()` calls. Providers like Groq and DeepSeek (OpenAI-compatible) can share the same extractor. You can also chain multiple functions — the output of one becomes the input of the next via `reduce`.
 
 ```typescript
-const openAIExtractor = (data: string) =>
+const openAIExtractor = (data: any) =>
     JSON.parse(data).choices?.[0]?.delta?.content ?? "";
 
+const sanitizeExtractor = (text: string) => text.trim();
+
+// Usage as array — applied in order
+const stream = await streamer.fetchIA({
+    encodeBytes: true,
+    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
+    extractor: [openAIExtractor, sanitizeExtractor],
+});
+
 // Extract tool calls from function-calling responses
-const toolCallExtractor = (data: string) => {
+const toolCallExtractor = (data: any) => {
     const delta = JSON.parse(data).choices?.[0]?.delta;
     if (delta?.tool_calls?.[0]?.function?.arguments) {
         return { type: "tool_args", data: delta.tool_calls[0].function.arguments };
@@ -1026,15 +1096,26 @@ const toolCallExtractor = (data: string) => {
 };
 ```
 
-**Typed extractors** — `JSON.parse()` returns `any`, so properties don't offer autocomplete. Define your own interfaces and cast with `const parsed: MyType = JSON.parse(data)`. For multi-provider apps, consider an abstract class with a discriminated union; for runtime validation, use a schema library like Zod.
+**Typed extractors** — instead of typing each extractor internally, use the `fetchIA<O>()` generic. The `O` interface defines the expected output shape, and autocomplete flows into the returned `ReadableStream<O>`.
 
 ```typescript
-interface OpenAIChunk { choices?: Array<{ delta?: { content?: string } }> }
+interface TokenChunk { content: string }
 
-const typedExtractor = (data: string) => {
-    const parsed: OpenAIChunk = JSON.parse(data); // autocomplete on parsed.*
-    return parsed.choices?.[0]?.delta?.content ?? "";
-};
+const stream = await streamer.fetchIA<TokenChunk>({
+    encodeBytes: true,
+    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
+    extractor: [
+        (data) => JSON.parse(data).choices?.[0]?.delta ?? { content: "" },
+    ],
+});
+
+const reader = stream.getReader();
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    // value is TokenChunk — autocomplete on value.content
+    console.log(value.content);
+}
 ```
 
 **Dynamic headers** — instead of hardcoding `dataFetch()` per provider, build a factory that receives the provider name and API key and returns `{ url, headers, timeOut }`. This lets you switch providers by changing a single argument. You can wrap the full flow into a helper like `streamChat(provider, apiKey, model, messages)`.
@@ -1173,7 +1254,8 @@ lines.pop() → back to buffer → keep incomplete line for next chunk
 for each complete line:
   empty line?        → skip
   contains [DONE]?   → close stream, return
-  starts with data:? → strip prefix, call extractor (or use raw)
+  starts with data:? → strip prefix, JSON.parse
+                        extractor? → reduce(extractor, parsedData) chains functions
                         encodeBytes?
                           true  → enqueue Uint8Array with trailing \n
                           false → enqueue plain string

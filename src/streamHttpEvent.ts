@@ -91,9 +91,14 @@ export class StreamHttpEvent {
 
                 try {
                     if (cleanData) {
-                        const extracted = extractor
-                            ? extractor(cleanData)
-                            : cleanData;
+                        const parsedData = JSON.parse(cleanData);
+                        let extracted: typeof parsedData = parsedData;
+                        if (extractor && extractor.length) {
+                            extracted = extractor.reduce(
+                                (acc, fn) => fn(acc),
+                                extracted,
+                            );
+                        }
 
                         if (encodeBytes) {
                             controller.enqueue(
@@ -106,7 +111,7 @@ export class StreamHttpEvent {
                         }
                     }
                 } catch (error) {
-                    console.error("Error extracting data:", error);
+                    console.error("Erro ao extrair dados do body", error);
                 }
             }
         }
@@ -114,7 +119,11 @@ export class StreamHttpEvent {
         return false;
     }
 
-    private streamIA({ body, encodeBytes, extractor }: streamIaType) {
+    private streamIA<O extends object>({
+        body,
+        encodeBytes,
+        extractor,
+    }: streamIaType) {
         if (!body) return null;
         const bodyReader = body.getReader();
         const buffer = this.bufferControl();
@@ -122,7 +131,7 @@ export class StreamHttpEvent {
         const decoder: TextDecoder = new TextDecoder();
         const encoder: TextEncoder = new TextEncoder();
 
-        return new ReadableStream({
+        return new ReadableStream<O>({
             start: async (controller) => {
                 this.timeout({ controller, timeOutId, bodyReader });
 
@@ -148,7 +157,7 @@ export class StreamHttpEvent {
                             buffer,
                             controller,
                             encoder,
-                            extractor: extractor,
+                            extractor,
                             encodeBytes,
                         });
                         if (isDone) {
@@ -166,13 +175,13 @@ export class StreamHttpEvent {
         });
     }
 
-    public async fetchIA({
+    public async fetchIA<O extends object>({
         encodeBytes,
         signal,
         method,
         body,
         extractor,
-    }: FetchOptions) {
+    }: FetchOptions<O>) {
         if (!this.url) {
             throw new Error("dataFetch() precisa da url do seu provedor de IA");
         }
@@ -180,7 +189,7 @@ export class StreamHttpEvent {
         const fetcher = await fetch(this.url, {
             method: method ?? "POST",
             headers: this.headers,
-            body: body ?? "{}",
+            body: body ?? undefined,
             signal: signal,
         });
 
@@ -195,13 +204,13 @@ export class StreamHttpEvent {
         const contentType = fetcher.headers.get("content-type") ?? "";
 
         if (contentType?.includes("text/event-stream")) {
-            return this.streamIA({
+            return this.streamIA<O>({
                 body: fetcher.body,
                 encodeBytes,
                 extractor,
-            });
+            }) as ReadableStream<O>;
         } else {
-            return fetcher.json() as Promise<Body>;
+            return fetcher.json() as Promise<O>;
         }
     }
 }
