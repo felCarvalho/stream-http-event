@@ -221,6 +221,124 @@ stream.dataFetch({
 
 ---
 
+### Como o Estado Local Funciona com os Extractors
+
+O estado local é o mecanismo que permite que múltiplos extractors acumulem seus resultados em um único objeto compartilhado para cada linha SSE processada.
+
+#### O estado local
+
+O coração do estado local está no método `stateLocal()` (`src/streamHttpEvent.ts:23-40`):
+
+```typescript
+private stateLocal() {
+    const state = new Map<string, unknown>();
+
+    return {
+        getState: () => Object.fromEntries(state),
+        getStateOne: (key: string) => state.get(key),
+        setState: (newState: Record<string, unknown>) => {
+            for (const [key, value] of Object.entries(newState)) {
+                state.set(key, value);
+            }
+        },
+        clearState: () => state.clear(),
+        clearStateByKey: (key: string) => state.delete(key),
+        hasStateByKey: (key: string) => state.has(key),
+    };
+}
+```
+
+Seis operações:
+1. **`setState(obj)`** — Mescla as chaves do objeto recebido no Map interno
+2. **`getState()`** — Retorna o Map como um objeto plano (`{ key: value, ... }`)
+3. **`getStateOne(key)`** — Retorna o valor de uma chave específica
+4. **`hasStateByKey(key)`** — Verifica se uma chave existe no estado
+5. **`clearState()`** — Limpa todo o estado (usado entre linhas SSE)
+6. **`clearStateByKey(key)`** — Remove uma chave específica
+
+#### O algoritmo de extractor + estado
+
+No método `serialize()` (`src/streamHttpEvent.ts:120-144`), para cada linha `data:` parseada:
+
+```typescript
+if (extractor) {
+    for (const fn of extractor) {
+        state.setState(fn.fn(parsedData));      // 1. Executa o extractor e acumula no estado
+
+        if (state.hasStateByKey(fn.key)) {       // 2. Verifica se a chave foi preenchida
+            extractedState = state.getState();   // 3. Captura o estado acumulado
+        }
+    }
+}
+
+// 4. Decide o que enfileirar: estado extraído ou JSON bruto
+controller.enqueue(JSON.stringify(extractedState ?? parsedData));
+
+state.clearState();  // 5. Limpa o estado para a próxima linha SSE
+```
+
+#### Exemplo passo a passo
+
+Considere os extractors:
+
+```typescript
+const extractors = [
+    { key: "content", fn: (data) => { const c = data.choices?.[0]?.delta?.content; return c ? { content: c } : {}; } },
+    { key: "role",    fn: (data) => { const r = data.choices?.[0]?.delta?.role;    return r ? { role: r }    : {}; } },
+];
+```
+
+Agora, duas linhas SSE consecutivas chegam:
+
+```
+ESTADO INICIAL: state.clearState() → Map vazio
+
+--- Linha 1: data: {"choices":[{"delta":{"content":"Olá","role":"assistant"}}]}
+parsedData = { choices: [{ delta: { content: "Olá", role: "assistant" } }] }
+
+→ Extractor "content":
+  fn.fn(parsedData) → { content: "Olá" }
+  state.setState({ content: "Olá" })         → Map { "content": "Olá" }
+  state.hasStateByKey("content") → true      ✓
+  extractedState = state.getState()          → { content: "Olá" }
+
+→ Extractor "role":
+  fn.fn(parsedData) → { role: "assistant" }
+  state.setState({ role: "assistant" })      → Map { "content": "Olá", "role": "assistant" }
+  state.hasStateByKey("role") → true         ✓
+  extractedState = state.getState()          → { content: "Olá", role: "assistant" }
+
+→ Resultado enfileirado: {"content":"Olá","role":"assistant"}  (em vez do JSON bruto)
+
+→ state.clearState() → Map vazio
+
+--- Linha 2: data: {"choices":[{"delta":{"content":" mundo"}}]}
+parsedData = { choices: [{ delta: { content: " mundo" } }] }
+
+→ Extractor "content":
+  fn.fn(parsedData) → { content: " mundo" }
+  state.setState({ content: " mundo" })      → Map { "content": " mundo" }
+  state.hasStateByKey("content") → true      ✓
+  extractedState = state.getState()          → { content: " mundo" }
+
+→ Extractor "role":
+  fn.fn(parsedData) → {}                     (sem role neste chunk)
+  state.setState({})                         → Map { "content": " mundo" } (sem alteração)
+  state.hasStateByKey("role") → false        ✗ (chave não existe no Map)
+
+→ Resultado enfileirado: {"content":" mundo"}  (apenas o que foi extraído)
+
+→ state.clearState() → Map vazio
+```
+
+**Por que o estado local é necessário:**
+- Se cada extractor retornasse seu resultado isoladamente, o primeiro extractor sobrescreveria o output do segundo
+- O estado local atua como um **acumulador compartilhado** entre todos os extractors de uma mesma linha
+- O `hasStateByKey()` garante que extractors que não encontraram dados (retornaram `{}`) não resetem o estado acumulado
+- O `clearState()` entre linhas garante que dados de uma linha não vazem para a próxima
+
+---
+
 ### Mecanismo de Timeout
 
 O timeout é **baseado em inatividade** entre chunks — não limita o tempo total da requisição. A cada chunk de rede recebido e processado, o timer é resetado.
@@ -862,6 +980,124 @@ const extractors: extractorType[] = [
 ```json
 {"content":"Hello","role":"assistant"}
 ```
+
+---
+
+### How Local State Works with Extractors
+
+The local state is the mechanism that allows multiple extractors to accumulate their results into a single shared object for each processed SSE line.
+
+#### The Local State
+
+The core of the local state is the `stateLocal()` method (`src/streamHttpEvent.ts:23-40`):
+
+```typescript
+private stateLocal() {
+    const state = new Map<string, unknown>();
+
+    return {
+        getState: () => Object.fromEntries(state),
+        getStateOne: (key: string) => state.get(key),
+        setState: (newState: Record<string, unknown>) => {
+            for (const [key, value] of Object.entries(newState)) {
+                state.set(key, value);
+            }
+        },
+        clearState: () => state.clear(),
+        clearStateByKey: (key: string) => state.delete(key),
+        hasStateByKey: (key: string) => state.has(key),
+    };
+}
+```
+
+Six operations:
+1. **`setState(obj)`** — Merges the received object's keys into the internal Map
+2. **`getState()`** — Returns the Map as a plain object (`{ key: value, ... }`)
+3. **`getStateOne(key)`** — Returns the value of a specific key
+4. **`hasStateByKey(key)`** — Checks whether a key exists in the state
+5. **`clearState()`** — Clears all state (used between SSE lines)
+6. **`clearStateByKey(key)`** — Removes a specific key
+
+#### The Extractor + State Algorithm
+
+In the `serialize()` method (`src/streamHttpEvent.ts:120-144`), for each parsed `data:` line:
+
+```typescript
+if (extractor) {
+    for (const fn of extractor) {
+        state.setState(fn.fn(parsedData));       // 1. Run extractor and accumulate into state
+
+        if (state.hasStateByKey(fn.key)) {        // 2. Check if the key was populated
+            extractedState = state.getState();    // 3. Capture the accumulated state
+        }
+    }
+}
+
+// 4. Decide what to enqueue: extracted state or raw JSON
+controller.enqueue(JSON.stringify(extractedState ?? parsedData));
+
+state.clearState();  // 5. Clear state for the next SSE line
+```
+
+#### Step-by-Step Example
+
+Consider the extractors:
+
+```typescript
+const extractors = [
+    { key: "content", fn: (data) => { const c = data.choices?.[0]?.delta?.content; return c ? { content: c } : {}; } },
+    { key: "role",    fn: (data) => { const r = data.choices?.[0]?.delta?.role;    return r ? { role: r }    : {}; } },
+];
+```
+
+Now, two consecutive SSE lines arrive:
+
+```
+INITIAL STATE: state.clearState() → empty Map
+
+--- Line 1: data: {"choices":[{"delta":{"content":"Hello","role":"assistant"}}]}
+parsedData = { choices: [{ delta: { content: "Hello", role: "assistant" } }] }
+
+→ Extractor "content":
+  fn.fn(parsedData) → { content: "Hello" }
+  state.setState({ content: "Hello" })        → Map { "content": "Hello" }
+  state.hasStateByKey("content") → true       ✓
+  extractedState = state.getState()           → { content: "Hello" }
+
+→ Extractor "role":
+  fn.fn(parsedData) → { role: "assistant" }
+  state.setState({ role: "assistant" })        → Map { "content": "Hello", "role": "assistant" }
+  state.hasStateByKey("role") → true           ✓
+  extractedState = state.getState()            → { content: "Hello", role: "assistant" }
+
+→ Enqueued result: {"content":"Hello","role":"assistant"}  (instead of raw JSON)
+
+→ state.clearState() → empty Map
+
+--- Line 2: data: {"choices":[{"delta":{"content":" world"}}]}
+parsedData = { choices: [{ delta: { content: " world" } }] }
+
+→ Extractor "content":
+  fn.fn(parsedData) → { content: " world" }
+  state.setState({ content: " world" })        → Map { "content": " world" }
+  state.hasStateByKey("content") → true        ✓
+  extractedState = state.getState()            → { content: " world" }
+
+→ Extractor "role":
+  fn.fn(parsedData) → {}                        (no role in this chunk)
+  state.setState({})                            → Map { "content": " world" } (unchanged)
+  state.hasStateByKey("role") → false           ✗ (key does not exist in Map)
+
+→ Enqueued result: {"content":" world"}  (only what was extracted)
+
+→ state.clearState() → empty Map
+```
+
+**Why local state is necessary:**
+- If each extractor returned its result in isolation, the first extractor would overwrite the second one's output
+- The local state acts as a **shared accumulator** across all extractors for a single line
+- `hasStateByKey()` ensures that extractors which found no data (returned `{}`) don't reset the accumulated state
+- `clearState()` between lines ensures data from one line doesn't leak into the next
 
 ---
 
