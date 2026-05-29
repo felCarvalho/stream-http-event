@@ -10,8 +10,18 @@ export interface timeOutControlType {
     clearTime: () => void;
 }
 
+export interface stateLocalType {
+    getState: () => unknown | undefined;
+    getStateOne: (key: string) => unknown | undefined;
+    setState: (newState: Record<string, unknown>) => void;
+    clearState: () => void;
+    clearStateByKey: (key: string) => void;
+    hasStateByKey: (key: string) => boolean;
+}
+
 export interface extractorType {
-    (data: Record<string, any>): Record<string, any>;
+    key: string;
+    fn: (data: Record<string, any>) => Record<string, any>;
 }
 
 export interface dataFetchType {
@@ -27,6 +37,7 @@ export interface serializeType {
     encoder: TextEncoder;
     extractor?: extractorType[];
     encodeBytes: undefined | boolean;
+    state: stateLocalType;
 }
 
 export interface timeoutType {

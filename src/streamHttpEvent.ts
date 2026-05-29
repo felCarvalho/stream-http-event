@@ -20,6 +20,25 @@ export class StreamHttpEvent {
         this.extractor = extractor;
     }
 
+    private stateLocal() {
+        const state = new Map<string, unknown>();
+
+        return {
+            getState: () => Object.fromEntries(state),
+            getStateOne: (key: string) => state.get(key),
+            setState: (newState: Record<string, unknown>) => {
+                for (const [key, value] of Object.entries(
+                    newState as Record<string, unknown>,
+                )) {
+                    state.set(key, value);
+                }
+            },
+            clearState: () => state.clear(),
+            clearStateByKey: (key: string) => state.delete(key),
+            hasStateByKey: (key: string) => state.has(key),
+        };
+    }
+
     private bufferControl() {
         let buffer = "";
 
@@ -75,6 +94,7 @@ export class StreamHttpEvent {
         encoder,
         extractor,
         encodeBytes,
+        state,
     }: serializeType) {
         const lines = buffer.getBuffer().split("\n");
         buffer.setBuffer(lines.pop() ?? "");
@@ -95,14 +115,14 @@ export class StreamHttpEvent {
                 try {
                     if (cleanData) {
                         const parsedData = JSON.parse(cleanData);
-                        let extractedData = {};
+                        let extractedState;
 
                         if (extractor) {
                             for (const fn of extractor) {
-                                extractedData = fn(parsedData);
+                                state.setState(fn.fn(parsedData));
 
-                                if (extractedData) {
-                                    Object.assign(parsedData, extractedData);
+                                if (state.hasStateByKey(fn.key)) {
+                                    extractedState = state.getState();
                                 }
                             }
                         }
@@ -110,12 +130,18 @@ export class StreamHttpEvent {
                         if (encodeBytes) {
                             controller.enqueue(
                                 encoder.encode(
-                                    JSON.stringify(parsedData) + "\n",
+                                    JSON.stringify(
+                                        extractedState ?? parsedData,
+                                    ) + "\n",
                                 ),
                             );
                         } else {
-                            controller.enqueue(JSON.stringify(parsedData));
+                            controller.enqueue(
+                                JSON.stringify(extractedState ?? parsedData),
+                            );
                         }
+
+                        state.clearState();
                     }
                 } catch (error) {
                     console.error("Erro ao extrair dados do body", error);
@@ -135,6 +161,7 @@ export class StreamHttpEvent {
         const bodyReader = body.getReader();
         const buffer = this.bufferControl();
         const timeOutId = this.timeOutControl();
+        const state = this.stateLocal();
         const decoder: TextDecoder = new TextDecoder();
         const encoder: TextEncoder = new TextEncoder();
 
@@ -170,6 +197,7 @@ export class StreamHttpEvent {
                             encoder,
                             extractor,
                             encodeBytes,
+                            state,
                         });
                         if (isDone) {
                             timeOutId.clearTime();

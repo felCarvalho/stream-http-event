@@ -13,7 +13,7 @@ Uma biblioteca TypeScript leve para consumir **Server-Sent Events (SSE)** sobre 
 - Método HTTP configurável (padrão `POST`), headers e body
 - Faz parse de respostas `text/event-stream` (SSE) em tempo real via `ReadableStream`
 - Lida com chunks parciais/incompletos com um buffer interno
-- **Extractor** em array definido pelo usuário — funções que recebem o JSON já parseado da IA e retornam dados adicionais a serem mergeados na resposta (opcional, fallback para dado bruto)
+- **Extractor** em array definido pelo usuário — objetos `{ key, fn }` onde `fn` recebe o JSON parseado do chunk e retorna um objeto mergeado no estado local via `stateLocal`; a `key` sinaliza que houve extração e dispara a saída do estado acumulado (opcional, fallback para o chunk bruto)
 - Detecta `[DONE]` como sinal de término do stream
 - `timeOut` opcional para abortar conexões travadas (reseta a cada chunk recebido)
 - Opcionalmente codifica a saída em `Uint8Array`
@@ -41,9 +41,12 @@ streamer.dataFetch({
     },
     timeOut: 30000, // 30s de timeout, reseta a cada chunk recebido
     extractor: [
-        (data) => ({
-            content: data.choices?.[0]?.delta?.content ?? "",
-        }),
+        {
+            key: "content",
+            fn: (data) => ({
+                content: data.choices?.[0]?.delta?.content ?? "",
+            }),
+        },
     ],
 });
 
@@ -96,7 +99,7 @@ Configura os parâmetros estáticos da requisição. **Deve ser chamado antes de
 | `url` | `string` | Sim | A URL do endpoint |
 | `headers` | `Record<string, string>` | Não | Cabeçalhos HTTP (ex.: `Authorization`, `Content-Type`) |
 | `timeOut` | `number` | Não | Milissegundos máximos sem chunk antes de abortar. Reseta a cada chunk recebido. Se `0` ou omitido, sem timeout. |
-| `extractor` | `Array<(data: Record<string, any>) => Record<string, any>>` | Não | Array de funções de extração aplicadas sobre cada chunk JSON da IA. Cada função retorna um objeto mergeado na resposta. Configuração estática — reutilizada em todas as chamadas `fetchIA()`. Pode ser sobrescrita por requisição passando `extractor` em `fetchIA()`. |
+| `extractor` | `extractorType[]` | Não | Array de extratores `{ key, fn }` aplicados sobre cada chunk JSON da IA. Cada `fn` retorna um objeto mergeado no estado local; a `key` sinaliza que houve extração. Configuração estática — reutilizada em todas as chamadas `fetchIA()`. Pode ser sobrescrita por requisição passando `extractor` em `fetchIA()`. |
 
 ---
 
@@ -112,9 +115,9 @@ Lança erro se `dataFetch()` não tiver sido chamado antes.
 | `signal` | `AbortSignal` | Não | Repassado ao `fetch()` interno. Abortar o sinal cancela a requisição HTTP e o leitor do stream. |
 | `method` | `string` | Não | Método HTTP da requisição. Padrão `"POST"`. |
 | `body` | `any` | Não | Corpo da requisição. Normalmente `JSON.stringify(...)`. Padrão `"{}"`. |
-| `extractor` | `Array<(data: Record<string, any>) => Record<string, any>>` | Não | Array de funções aplicadas sobre cada chunk JSON já parseado. **Sobrescreve** o extrator definido em `dataFetch()` para esta requisição. Se omitido em ambos (`dataFetch` e `fetchIA`), o JSON parseado é enfileirado como está. |
+| `extractor` | `extractorType[]` | Não | Array de extratores `{ key, fn }` aplicados sobre cada chunk JSON já parseado. **Sobrescreve** o extrator definido em `dataFetch()` para esta requisição. Se omitido em ambos (`dataFetch` e `fetchIA`), o JSON parseado é enfileirado como está (fallback). |
 
-> **Tipagem:** `fetchIA<O>()` recebe o tipo de saída esperado como genérico. Os extractors enriquecem o JSON da IA com dados adicionais mergeados via `Object.assign`. O autocomplete flui do genérico `O` para o `ReadableStream<O>` ou `Promise<O>` retornado.
+> **Tipagem:** `fetchIA<O>()` recebe o tipo de saída esperado como genérico. Os extratores enriquecem o JSON da IA com dados mergeados no estado local via `stateLocal`. O autocomplete flui do genérico `O` para o `ReadableStream<O>` ou `Promise<O>` retornado.
 
 ---
 
@@ -134,7 +137,10 @@ streamer.dataFetch({
     },
     timeOut: 30000,
     extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+        {
+            key: "content",
+            fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+        },
     ],
 });
 
@@ -146,6 +152,12 @@ const stream = await streamer.fetchIA({
         stream: true,
         temperature: 0.7,
     }),
+    extractor: [
+        {
+            key: "content",
+            fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+        },
+    ],
 });
 ```
 
@@ -162,11 +174,14 @@ streamer.dataFetch({
         "anthropic-version": "2023-06-01",
     },
     extractor: [
-        (data) => ({
-            content: data.type === "content_block_delta"
-                ? data.delta?.text ?? ""
-                : "",
-        }),
+        {
+            key: "content",
+            fn: (data) => ({
+                content: data.type === "content_block_delta"
+                    ? data.delta?.text ?? ""
+                    : "",
+            }),
+        },
     ],
 });
 
@@ -190,9 +205,12 @@ streamer.dataFetch({
     url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:streamGenerateContent?key=${process.env.GEMINI_API_KEY}`,
     headers: { "Content-Type": "application/json" },
     extractor: [
-        (data) => ({
-            content: data.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
-        }),
+        {
+            key: "content",
+            fn: (data) => ({
+                content: data.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
+            }),
+        },
     ],
 });
 
@@ -214,7 +232,7 @@ streamer.dataFetch({
         Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
     },
     extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
     ],
 });
 
@@ -238,7 +256,7 @@ streamer.dataFetch({
         Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
     },
     extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
     ],
 });
 
@@ -263,7 +281,7 @@ const stream = await streamer.fetchIA({
     signal: controller.signal,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
     extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
     ],
 });
 // stream.getReader().read() rejeitará com AbortError após 10s
@@ -289,7 +307,7 @@ app.get("/chat", async (req, res) => {
         encodeBytes: true,
         body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
         extractor: [
-            (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+            { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
         ],
     });
 
@@ -413,7 +431,7 @@ const stream = await streamer.fetchIA({
         stream: true,
     }),
     extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
     ],
 });
 
@@ -431,19 +449,25 @@ while (true) {
 
 ---
 
-**Extractors reutilizáveis** — defina as funções de extração uma vez e passe-as como array em múltiplas chamadas `fetchIA()`. Provedores compatíveis com OpenAI (Groq, DeepSeek) podem compartilhar o mesmo extractor. Cada extrator recebe o JSON já parseado e retorna um objeto com dados a serem mergeados na resposta via `Object.assign`. Múltiplos extratores acumulam — todos os resultados são combinados no objeto final.
+**Extractors reutilizáveis** — defina os extratores como objetos `{ key, fn }` uma vez e passe-os como array em múltiplas chamadas `fetchIA()`. Provedores compatíveis com OpenAI (Groq, DeepSeek) podem compartilhar o mesmo extrator. Cada `fn` recebe o JSON parseado do chunk e retorna um objeto mergeado no estado local via `stateLocal`. A `key` sinaliza que houve extração e dispara a saída do estado acumulado. Múltiplos extratores acumulam — todos os resultados são combinados no estado.
 
 ```typescript
-const openAIExtractor = (data: any) => ({
-    content: data.choices?.[0]?.delta?.content ?? "",
-});
+const openAIExtractor = {
+    key: "content",
+    fn: (data: any) => ({
+        content: data.choices?.[0]?.delta?.content ?? "",
+    }),
+};
 
-const wordCountExtractor = (data: any) => ({
-    wordCount: (data.choices?.[0]?.delta?.content ?? "")
-        .trim().split(/\s+/).filter(Boolean).length,
-});
+const wordCountExtractor = {
+    key: "wordCount",
+    fn: (data: any) => ({
+        wordCount: (data.choices?.[0]?.delta?.content ?? "")
+            .trim().split(/\s+/).filter(Boolean).length,
+    }),
+};
 
-// Múltiplos extratores — todos os resultados são mergeados
+// Múltiplos extratores — todos os resultados são mergeados no estado
 const stream = await streamer.fetchIA({
     encodeBytes: true,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
@@ -451,13 +475,16 @@ const stream = await streamer.fetchIA({
 });
 
 // Extrai tool calls de respostas function-calling
-const toolCallExtractor = (data: any) => {
-    const delta = data.choices?.[0]?.delta;
-    if (delta?.tool_calls?.[0]?.function?.arguments) {
-        return { type: "tool_args", data: delta.tool_calls[0].function.arguments };
-    }
-    if (delta?.content) return { type: "text", data: delta.content };
-    return null;
+const toolCallExtractor = {
+    key: "type",
+    fn: (data: any) => {
+        const delta = data.choices?.[0]?.delta;
+        if (delta?.tool_calls?.[0]?.function?.arguments) {
+            return { type: "tool_args", data: delta.tool_calls[0].function.arguments };
+        }
+        if (delta?.content) return { type: "text", data: delta.content };
+        return {};
+    },
 };
 ```
 
@@ -470,7 +497,10 @@ const stream = await streamer.fetchIA<TokenChunk>({
     encodeBytes: true,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
     extractor: [
-        (data) => data.choices?.[0]?.delta ?? { content: "" },
+        {
+            key: "content",
+            fn: (data) => data.choices?.[0]?.delta ?? { content: "" },
+        },
     ],
 });
 
@@ -584,7 +614,7 @@ dataFetch()  →  fetchIA()  →  fetch()  →  streamIA()  →  ReadableStream
   (config)       (requisição)  (HTTP)      (fábrica)       (saída)
 ```
 
-**1. `dataFetch(url, headers, timeOut)`**
+**1. `dataFetch({ url, headers, timeOut, extractor })`**
 Armazena a config estática nos campos da instância. Nenhuma requisição é feita. Pode ser chamado uma vez e reutilizado em múltiplos `fetchIA()`.
 
 **2. `fetchIA({ encodeBytes, signal, method, body, extractor })`**
@@ -597,6 +627,7 @@ Cria o `ReadableStream` de saída. Internamente configura:
 - `bodyReader` — lê chunks brutos da rede da resposta HTTP
 - `bufferControl` — acumulador de linhas SSE parciais
 - `timeOutControl` — gerencia `setTimeout`/`clearTimeout`
+- `stateLocal` — estado em memória para acumular dados extraídos
 - `TextDecoder`/`TextEncoder` — conversão texto ↔ bytes
 
 **4. Loop de leitura** (dentro do callback do `ReadableStream`)
@@ -611,7 +642,7 @@ em erro → limpa timeout, propaga erro
 finally → libera lock do reader
 ```
 
-**5. `serialize(buffer, controller, encoder, extractor, encodeBytes)`**
+**5. `serialize(buffer, controller, encoder, extractor, encodeBytes, state)`**
 ```
 buffer.split("\n")          → divide o texto acumulado por linhas
 lines.pop() → volta ao buffer → guarda linha incompleta para o próximo chunk
@@ -620,10 +651,13 @@ para cada linha completa:
   linha vazia?      → pula
   contém [DONE]?    → fecha stream, retorna
   começa com data:? → remove prefixo, faz JSON.parse
-                       extractor? → Object.assign(parsedData, extracted) mergeia resultados
+                       extractor? → state.setState(fn.fn(parsedData));
+                                    se state.hasStateByKey(fn.key): snapshot do estado
+                                    se não: fallback para parsedData bruto
                        encodeBytes?
                          true  → enqueue Uint8Array com \n no final
                          false → enqueue string pura
+                       state.clearState() → reseta para o próximo chunk
 ```
 
 **6. `timeout(controller, timeOutId, bodyReader)`**
@@ -652,7 +686,7 @@ A lightweight TypeScript library for consuming **Server-Sent Events (SSE)** over
 - Configurable HTTP method (defaults to `POST`), headers and body
 - Parses `text/event-stream` (SSE) responses in real-time via `ReadableStream`
 - Handles partial/incomplete chunks across network boundaries with an internal buffer
-- User-defined **extractor** array — functions that receive the AI's already-parsed JSON and return additional data to be merged into the response (optional, falls back to raw data)
+- User-defined **extractor** array — `{ key, fn }` objects where `fn` receives the chunk's already-parsed JSON and returns data merged into local state via `stateLocal`; `key` signals extraction occurred and triggers output of accumulated state (optional, falls back to raw chunk)
 - Detects `[DONE]` as the stream termination signal
 - Optional `timeOut` to abort hanging connections (resets on each received chunk)
 - Optionally encodes output as `Uint8Array` bytes (ideal for piping into further streams)
@@ -680,9 +714,12 @@ streamer.dataFetch({
     },
     timeOut: 30000, // 30s timeout, resets on each chunk received
     extractor: [
-        (data) => ({
-            content: data.choices?.[0]?.delta?.content ?? "",
-        }),
+        {
+            key: "content",
+            fn: (data) => ({
+                content: data.choices?.[0]?.delta?.content ?? "",
+            }),
+        },
     ],
 });
 
@@ -735,7 +772,7 @@ Configures the static request parameters. **Must be called before `fetchIA()`.**
 | `url` | `string` | Yes | The endpoint URL |
 | `headers` | `Record<string, string>` | No | HTTP headers (e.g., `Authorization`, `Content-Type`) |
 | `timeOut` | `number` | No | Max milliseconds without a chunk before aborting. Resets on each received chunk. If `0` or omitted, no timeout is enforced. |
-| `extractor` | `Array<(data: Record<string, any>) => Record<string, any>>` | No | Array of extractor functions applied to each AI JSON chunk. Each function returns an object merged into the response. Static config — reused across all `fetchIA()` calls. Can be overridden per request by passing `extractor` in `fetchIA()`. |
+| `extractor` | `extractorType[]` | No | Array of `{ key, fn }` extractor objects applied to each AI JSON chunk. Each `fn` returns an object merged into local state; `key` signals extraction occurred. Static config — reused across all `fetchIA()` calls. Can be overridden per request by passing `extractor` in `fetchIA()`. |
 
 ---
 
@@ -751,9 +788,9 @@ Throws an error if `dataFetch()` was not called beforehand.
 | `signal` | `AbortSignal` | No | Passed to the underlying `fetch()` call. Aborting the signal cancels the HTTP request and the stream reader. |
 | `method` | `string` | No | HTTP method for the request. Defaults to `"POST"`. |
 | `body` | `any` | No | Request body. Typically `JSON.stringify(...)`. Defaults to `"{}"`. |
-| `extractor` | `Array<(data: Record<string, any>) => Record<string, any>>` | No | Array of functions applied to each already-parsed JSON chunk. **Overrides** the extractor set in `dataFetch()` for this request. If omitted in both (`dataFetch` and `fetchIA`), the parsed JSON is enqueued as-is. |
+| `extractor` | `extractorType[]` | No | Array of `{ key, fn }` extractor objects applied to each already-parsed JSON chunk. **Overrides** the extractor set in `dataFetch()` for this request. If omitted in both (`dataFetch` and `fetchIA`), the parsed JSON is enqueued as-is (fallback). |
 
-> **Typing:** `fetchIA<O>()` accepts the expected output type as a generic. Extractors enrich the AI JSON with additional data merged via `Object.assign`. Autocomplete flows from the `O` generic into the returned `ReadableStream<O>` or `Promise<O>`.
+> **Typing:** `fetchIA<O>()` accepts the expected output type as a generic. Extractors enrich the AI JSON with data merged into local state via `stateLocal`. Autocomplete flows from the `O` generic into the returned `ReadableStream<O>` or `Promise<O>`.
 
 ---
 
@@ -773,7 +810,7 @@ streamer.dataFetch({
     },
     timeOut: 30000,
     extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
     ],
 });
 
@@ -801,11 +838,14 @@ streamer.dataFetch({
         "anthropic-version": "2023-06-01",
     },
     extractor: [
-        (data) => ({
-            content: data.type === "content_block_delta"
-                ? data.delta?.text ?? ""
-                : "",
-        }),
+        {
+            key: "content",
+            fn: (data) => ({
+                content: data.type === "content_block_delta"
+                    ? data.delta?.text ?? ""
+                    : "",
+            }),
+        },
     ],
 });
 
@@ -829,9 +869,12 @@ streamer.dataFetch({
     url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:streamGenerateContent?key=${process.env.GEMINI_API_KEY}`,
     headers: { "Content-Type": "application/json" },
     extractor: [
-        (data) => ({
-            content: data.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
-        }),
+        {
+            key: "content",
+            fn: (data) => ({
+                content: data.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
+            }),
+        },
     ],
 });
 
@@ -853,7 +896,7 @@ streamer.dataFetch({
         Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
     },
     extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
     ],
 });
 
@@ -877,7 +920,7 @@ streamer.dataFetch({
         Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
     },
     extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
     ],
 });
 
@@ -902,7 +945,7 @@ const stream = await streamer.fetchIA({
     signal: controller.signal,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
     extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
     ],
 });
 // stream.getReader().read() will reject with AbortError after 10s
@@ -928,7 +971,7 @@ app.get("/chat", async (req, res) => {
         encodeBytes: true,
         body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
         extractor: [
-            (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+            { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
         ],
     });
 
@@ -1052,7 +1095,7 @@ const stream = await streamer.fetchIA({
         stream: true,
     }),
     extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
     ],
 });
 
@@ -1070,19 +1113,25 @@ while (true) {
 
 ---
 
-**Reusable extractors** — define extraction functions once and pass them as an array across multiple `fetchIA()` calls. Providers like Groq and DeepSeek (OpenAI-compatible) can share the same extractor. Each extractor receives the already-parsed JSON and returns an object with data to be merged into the response via `Object.assign`. Multiple extractors accumulate — all results are combined into the final object.
+**Reusable extractors** — define extractors as `{ key, fn }` objects once and pass them as an array across multiple `fetchIA()` calls. Providers like Groq and DeepSeek (OpenAI-compatible) can share the same extractor. Each `fn` receives the chunk's already-parsed JSON and returns an object merged into local state via `stateLocal`. The `key` signals extraction occurred and triggers output of the accumulated state. Multiple extractors accumulate — all results are combined in the state.
 
 ```typescript
-const openAIExtractor = (data: any) => ({
-    content: data.choices?.[0]?.delta?.content ?? "",
-});
+const openAIExtractor = {
+    key: "content",
+    fn: (data: any) => ({
+        content: data.choices?.[0]?.delta?.content ?? "",
+    }),
+};
 
-const wordCountExtractor = (data: any) => ({
-    wordCount: (data.choices?.[0]?.delta?.content ?? "")
-        .trim().split(/\s+/).filter(Boolean).length,
-});
+const wordCountExtractor = {
+    key: "wordCount",
+    fn: (data: any) => ({
+        wordCount: (data.choices?.[0]?.delta?.content ?? "")
+            .trim().split(/\s+/).filter(Boolean).length,
+    }),
+};
 
-// Multiple extractors — all results are merged
+// Multiple extractors — all results are merged into state
 const stream = await streamer.fetchIA({
     encodeBytes: true,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
@@ -1090,13 +1139,16 @@ const stream = await streamer.fetchIA({
 });
 
 // Extract tool calls from function-calling responses
-const toolCallExtractor = (data: any) => {
-    const delta = data.choices?.[0]?.delta;
-    if (delta?.tool_calls?.[0]?.function?.arguments) {
-        return { type: "tool_args", data: delta.tool_calls[0].function.arguments };
-    }
-    if (delta?.content) return { type: "text", data: delta.content };
-    return null;
+const toolCallExtractor = {
+    key: "type",
+    fn: (data: any) => {
+        const delta = data.choices?.[0]?.delta;
+        if (delta?.tool_calls?.[0]?.function?.arguments) {
+            return { type: "tool_args", data: delta.tool_calls[0].function.arguments };
+        }
+        if (delta?.content) return { type: "text", data: delta.content };
+        return {};
+    },
 };
 ```
 
@@ -1109,7 +1161,10 @@ const stream = await streamer.fetchIA<TokenChunk>({
     encodeBytes: true,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
     extractor: [
-        (data) => data.choices?.[0]?.delta ?? { content: "" },
+        {
+            key: "content",
+            fn: (data) => data.choices?.[0]?.delta ?? { content: "" },
+        },
     ],
 });
 
@@ -1223,7 +1278,7 @@ dataFetch()  →  fetchIA()  →  fetch()  →  streamIA()  →  ReadableStream
   (config)       (request)     (HTTP)      (factory)       (output)
 ```
 
-**1. `dataFetch(url, headers, timeOut)`**
+**1. `dataFetch({ url, headers, timeOut, extractor })`**
 Stores static config in instance fields. No request is made. Can be called once and reused across multiple `fetchIA()` calls.
 
 **2. `fetchIA({ encodeBytes, signal, method, body, extractor })`**
@@ -1236,6 +1291,7 @@ Creates the output `ReadableStream`. Internally sets up:
 - `bodyReader` — reads raw network chunks from the HTTP response
 - `bufferControl` — accumulator for partial SSE lines
 - `timeOutControl` — manages `setTimeout`/`clearTimeout`
+- `stateLocal` — in-memory state for accumulating extracted data
 - `TextDecoder`/`TextEncoder` — text ↔ bytes conversion
 
 **4. Read loop** (inside the `ReadableStream` callback)
@@ -1250,7 +1306,7 @@ on error → clear timeout, propagate error
 finally → release reader lock
 ```
 
-**5. `serialize(buffer, controller, encoder, extractor, encodeBytes)`**
+**5. `serialize(buffer, controller, encoder, extractor, encodeBytes, state)`**
 ```
 buffer.split("\n")          → split accumulated text into lines
 lines.pop() → back to buffer → keep incomplete line for next chunk
@@ -1259,10 +1315,13 @@ for each complete line:
   empty line?        → skip
   contains [DONE]?   → close stream, return
   starts with data:? → strip prefix, JSON.parse
-                        extractor? → Object.assign(parsedData, extracted) merges results
+                        extractor? → state.setState(fn.fn(parsedData));
+                                     if state.hasStateByKey(fn.key): snapshot state
+                                     else: fall back to raw parsedData
                         encodeBytes?
                           true  → enqueue Uint8Array with trailing \n
                           false → enqueue plain string
+                        state.clearState() → reset for next chunk
 ```
 
 **6. `timeout(controller, timeOutId, bodyReader)`**
