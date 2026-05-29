@@ -354,7 +354,8 @@ while (true) {
     const lines = text.split("\n").filter(Boolean);
 
     for (const line of lines) {
-        outputEl.textContent += JSON.parse(line);
+        const parsed = JSON.parse(line);
+        outputEl.textContent += parsed.content;
     }
 }
 ```
@@ -390,7 +391,8 @@ function Chat() {
             const lines = chunk.split("\n").filter(Boolean);
 
             for (const line of lines) {
-                setText((prev) => prev + JSON.parse(line));
+                const parsed = JSON.parse(line);
+                setText((prev) => prev + parsed.content);
             }
         }
     };
@@ -441,7 +443,8 @@ const output = document.getElementById("output")!;
 while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    output.textContent += JSON.parse(value);
+    const parsed = JSON.parse(value);
+    output.textContent += parsed.content;
 }
 ```
 
@@ -505,11 +508,12 @@ const stream = await streamer.fetchIA<TokenChunk>({
 });
 
 const reader = stream.getReader();
+const decoder = new TextDecoder();
 while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    // value é TokenChunk — autocomplete em value.content
-    console.log(value.content);
+    const parsed = JSON.parse(decoder.decode(value)) as TokenChunk;
+    console.log(parsed.content);
 }
 ```
 
@@ -1018,7 +1022,8 @@ while (true) {
     const lines = text.split("\n").filter(Boolean);
 
     for (const line of lines) {
-        outputEl.textContent += JSON.parse(line);
+        const parsed = JSON.parse(line);
+        outputEl.textContent += parsed.content;
     }
 }
 ```
@@ -1054,7 +1059,8 @@ function Chat() {
             const lines = chunk.split("\n").filter(Boolean);
 
             for (const line of lines) {
-                setText((prev) => prev + JSON.parse(line));
+                const parsed = JSON.parse(line);
+                setText((prev) => prev + parsed.content);
             }
         }
     };
@@ -1105,7 +1111,8 @@ const output = document.getElementById("output")!;
 while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    output.textContent += JSON.parse(value);
+    const parsed = JSON.parse(value);
+    output.textContent += parsed.content;
 }
 ```
 
@@ -1169,11 +1176,12 @@ const stream = await streamer.fetchIA<TokenChunk>({
 });
 
 const reader = stream.getReader();
+const decoder = new TextDecoder();
 while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    // value is TokenChunk — autocomplete on value.content
-    console.log(value.content);
+    const parsed = JSON.parse(decoder.decode(value)) as TokenChunk;
+    console.log(parsed.content);
 }
 ```
 
