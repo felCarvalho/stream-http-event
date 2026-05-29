@@ -1,1344 +1,1313 @@
 # @felipe-lib/stream-http-event
 
-*[Português](#português) | [English](#english)*
-
 ---
 
-## Português
+## 📘 Português
 
-Uma biblioteca TypeScript leve para consumir **Server-Sent Events (SSE)** sobre HTTP — criada para respostas em streaming de APIs de IA/LLM.
+### Visão Geral
 
-### Funcionalidades
+`@felipe-lib/stream-http-event` é uma biblioteca TypeScript leve (zero dependências externas de runtime) para consumir respostas HTTP em streaming de provedores de IA (OpenAI, Anthropic, Groq, etc.) que utilizam o protocolo **Server-Sent Events (SSE)** com `text/event-stream`.
 
-- Método HTTP configurável (padrão `POST`), headers e body
-- Faz parse de respostas `text/event-stream` (SSE) em tempo real via `ReadableStream`
-- Lida com chunks parciais/incompletos com um buffer interno
-- **Extractor** em array definido pelo usuário — objetos `{ key, fn }` onde `fn` recebe o JSON parseado do chunk e retorna um objeto mergeado no estado local via `stateLocal`; a `key` sinaliza que houve extração e dispara a saída do estado acumulado (opcional, fallback para o chunk bruto)
-- Detecta `[DONE]` como sinal de término do stream
-- `timeOut` opcional para abortar conexões travadas (reseta a cada chunk recebido)
-- Opcionalmente codifica a saída em `Uint8Array`
-- Fallback para `response.json()` em respostas não-streaming
+A biblioteca encapsula a API nativa `fetch` e transforma o fluxo bruto de bytes SSE em uma **`ReadableStream`** de objetos JSON parseados, com suporte a extração de campos, timeout por inatividade e dupla codificação (bytes ou string).
+
+**Ambientes suportados:** Navegadores modernos, Node.js 18+, Deno, Bun, Cloudflare Workers — qualquer runtime que suporte `fetch`, `ReadableStream`, `TextDecoder` e `TextEncoder`.
+
+---
 
 ### Instalação
 
 ```bash
 npm install @felipe-lib/stream-http-event
+# ou
+pnpm add @felipe-lib/stream-http-event
 ```
 
-### Guia Rápido
+---
+
+### Funcionalidades
+
+- **Consumo SSE → ReadableStream** — Converte fluxos `text/event-stream` em streams de objetos JSON
+- **Buffer inteligente** — Lida com chunks de rede que chegam cortados no meio de linhas SSE
+- **Timeout por inatividade** — Encerra o stream automaticamente se o provedor parar de enviar dados
+- **Sistema de Extractors** — Transforma o formato bruto da resposta da IA em objetos customizados
+- **Dupla codificação** — Saída como `string` (JSON puro) ou `Uint8Array` (bytes codificados)
+- **Detecção de `[DONE]`** — Reconhece o sinal de fim de stream do protocolo SSE
+- **Fallback para JSON** — Se o endpoint não retornar `text/event-stream`, faz parse como JSON comum
+- **Controle de AbortSignal** — Suporte a cancelamento via `AbortController`
+
+---
+
+### API
+
+#### `dataFetch(config: dataFetchType): void`
+
+Configura a instância antes de realizar as chamadas. Deve ser chamada antes de `fetchIA()`.
+
+```typescript
+type dataFetchType = {
+    url: string;                        // URL do endpoint da IA
+    headers?: Record<string, string>;   // Headers HTTP customizados (ex: Authorization)
+    timeOut?: number;                   // Timeout de inatividade em ms
+    extractor?: extractorType[];        // Extractors padrão para todas as chamadas
+}
+```
+
+#### `fetchIA<O extends object>(options: FetchOptions): Promise<ReadableStream<O> | O>`
+
+Executa a requisição HTTP e retorna o resultado. Se o `content-type` da resposta for `text/event-stream`, retorna uma `ReadableStream<O>`. Caso contrário, faz parse como JSON e retorna o objeto `O`.
+
+```typescript
+type FetchOptions<O extends object = object> = {
+    signal?: AbortSignal;       // Sinal para cancelamento
+    encodeBytes?: boolean;      // true = Uint8Array, false/undefined = string
+    method?: string;            // Método HTTP (padrão: "POST")
+    body?: string;              // Corpo da requisição (string JSON)
+    extractor?: extractorType[];// Extractors específicos desta chamada (sobrescreve os padrão)
+}
+```
+
+---
+
+### Como o Buffer Funciona
+
+O buffer resolve um problema fundamental do streaming sobre rede: **os chunks de bytes chegam em tamanhos arbitrários que podem cortar linhas SSE no meio**.
+
+#### O problema
+
+Dados SSE de um provedor de IA chegam assim:
+
+```
+data: {"choices":[{"delta":{"content":"Olá"}}]}
+
+data: {"choices":[{"delta":{"content":" mundo"}}]}
+
+data: [DONE]
+```
+
+Mas a rede entrega os chunks de forma imprevisível:
+
+```
+Chunk 1: "data: {\"choices\":[{\"delta\":{\"content\":\"Ol"
+Chunk 2: "á\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" mun"
+Chunk 3: "do\"}}]}\n\ndata: [DONE]\n\n"
+```
+
+Sem buffer, tentar fazer `.split("\n")` no Chunk 1 resultaria em uma linha incompleta que não é JSON válido.
+
+#### A solução
+
+O coração do buffer está no método `bufferControl()` (`src/streamHttpEvent.ts:42-54`):
+
+```typescript
+private bufferControl() {
+    let buffer = "";
+
+    return {
+        getBuffer: () => buffer,
+        setBuffer: (data: string) => { buffer = data; },
+        add: (data: string) => { buffer += data; },
+    };
+}
+```
+
+Três operações simples:
+1. **`add(data)`** — Concatena cada novo chunk decodificado ao buffer
+2. **`getBuffer()`** — Retorna o conteúdo atual do buffer
+3. **`setBuffer(data)`** — Substitui o buffer inteiro (usado para reaproveitar linhas incompletas)
+
+#### O algoritmo de serialização
+
+No método `serialize()` (`src/streamHttpEvent.ts:91-153`):
+
+```typescript
+const lines = buffer.getBuffer().split("\n");   // Divide o buffer por quebras de linha
+buffer.setBuffer(lines.pop() ?? "");             // A última linha (possivelmente incompleta) volta ao buffer
+```
+
+Este é o **insight chave**:
+- `.split("\n")` quebra todo o buffer em linhas
+- `lines.pop()` remove e **guarda o último elemento** — que pode ser uma linha incompleta que ainda não recebeu seu `\n`
+- As linhas restantes são **garantidamente completas** (terminadas por `\n`)
+- O fragmento incompleto é armazenado de volta no buffer via `setBuffer()`, aguardando o próximo chunk
+
+#### Exemplo passo a passo
+
+```
+ESTADO INICIAL: buffer = ""
+
+--- Chunk 1 chega: "data: {\"content\":\"Hel" ---
+buffer.add() → buffer = "data: {\"content\":\"Hel"
+split("\n") → ["data: {\"content\":\"Hel"]
+lines.pop() → "data: {\"content\":\"Hel" (volta ao buffer)
+Nenhuma linha completa para processar.
+
+--- Chunk 2 chega: "lo\"}\n\ndata: {\"content\":\"Wo" ---
+buffer antes: "data: {\"content\":\"Hel"
+buffer.add() → buffer = "data: {\"content\":\"Hello\"}\n\ndata: {\"content\":\"Wo"
+split("\n") → ["data: {\"content\":\"Hello\"}", "", "data: {\"content\":\"Wo"]
+lines.pop() → "data: {\"content\":\"Wo" (incompleta, volta ao buffer)
+Linhas completas:
+  - "data: {\"content\":\"Hello\"}" → JSON.parse → enfileirado ✓
+  - "" (linha vazia) → ignorada
+
+--- Chunk 3 chega: "rld\"}\n\ndata: [DONE]\n\n" ---
+buffer antes: "data: {\"content\":\"Wo"
+buffer.add() → buffer = "data: {\"content\":\"World\"}\n\ndata: [DONE]\n\n"
+split("\n") → ["data: {\"content\":\"World\"}", "", "data: [DONE]", "", ""]
+lines.pop() → "" (vazia, sem efeito colateral)
+Linhas completas:
+  - "data: {\"content\":\"World\"}" → enfileirado ✓
+  - "" → ignorada
+  - "data: [DONE]" → detectado → stream fechado ✓
+```
+
+---
+
+### Sistema de Extractors
+
+Os extractors permitem mapear a resposta bruta da IA para um formato customizado, extraindo apenas os campos desejados.
+
+**Definição do tipo:**
+
+```typescript
+interface extractorType {
+    key: string;                                         // Nome da chave no estado extraído
+    fn: (data: Record<string, any>) => Record<string, any>; // Função que recebe o JSON parseado e retorna um objeto
+}
+```
+
+**Exemplo com OpenAI:**
+
+```typescript
+const extractors: extractorType[] = [
+    {
+        key: "content",
+        fn: (data) => {
+            const content = data.choices?.[0]?.delta?.content;
+            return content ? { content } : {};
+        }
+    },
+    {
+        key: "role",
+        fn: (data) => {
+            const role = data.choices?.[0]?.delta?.role;
+            return role ? { role } : {};
+        }
+    }
+];
+
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { "Authorization": "Bearer sk-..." },
+    extractor: extractors
+});
+```
+
+**Comportamento:**
+- Cada extractor é executado na ordem para cada linha `data:` parseada
+- O resultado de cada `fn()` é mesclado em um mapa de estado compartilhado
+- Se ao final da execução de todos os extractores **pelo menos uma chave** (definida no extractor) estiver presente no estado, o objeto de estado acumulado é enfileirado **em vez** do JSON bruto
+- O estado é limpo entre cada linha `data:` processada
+
+**O que chega no stream sem extractor:**
+```json
+{"id":"chatcmpl-xxx","choices":[{"delta":{"content":"Olá","role":"assistant"}}]}
+```
+
+**O que chega no stream com extractor:**
+```json
+{"content":"Olá","role":"assistant"}
+```
+
+---
+
+### Mecanismo de Timeout
+
+O timeout é **baseado em inatividade** entre chunks — não limita o tempo total da requisição. A cada chunk de rede recebido e processado, o timer é resetado.
+
+```typescript
+// Timeout de 10 segundos de inatividade
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { "Authorization": "Bearer sk-..." },
+    timeOut: 10000
+});
+```
+
+**Comportamento:**
+1. O timer inicia ao receber o primeiro chunk
+2. Cada novo chunk reseta o timer
+3. Se o tempo expirar sem dados novos:
+   - O controller da `ReadableStream` emite um erro: `"Ops, Sua provedor de IA demorou mais de {timeOut}ms"`
+   - O `bodyReader` é cancelado (abortando o fetch subjacente)
+4. Se o stream terminar normalmente (`[DONE]` ou fim do body), o timer é limpo
+
+**Implementação:** `src/streamHttpEvent.ts:72-89` e `src/streamHttpEvent.ts:56-70`
+
+---
+
+### Modos de Encoding (`encodeBytes`)
+
+O parâmetro `encodeBytes` controla o formato de saída da `ReadableStream`:
+
+| `encodeBytes` | Tipo de cada chunk | Uso |
+|---|---|---|
+| `false` ou `undefined` | `string` (JSON puro) | Consumo direto em código, fácil de logar e debugar |
+| `true` | `Uint8Array` | Piping para outra stream, gravação em arquivo, consumo binário |
+
+**Exemplo com `encodeBytes: false`:**
+```typescript
+const stream = await stream.fetchIA({ encodeBytes: false });
+// stream.getReader().read() → { value: '{"content":"Olá"}', done: false }
+```
+
+**Exemplo com `encodeBytes: true`:**
+```typescript
+const stream = await stream.fetchIA({ encodeBytes: true });
+// stream.getReader().read() → { value: Uint8Array([...]), done: false }
+// Cada chunk é a string JSON + "\n" codificada em UTF-8
+```
+
+---
+
+### Casos de Uso
+
+#### 1. Streaming de chat com OpenAI (ChatGPT)
 
 ```typescript
 import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
 
-const streamer = new StreamHttpEvent();
+const stream = new StreamHttpEvent();
 
-// 1. Configuração estática — reutilizável em várias chamadas fetchIA()
-streamer.dataFetch({
+stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
     headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-    },
-    timeOut: 30000, // 30s de timeout, reseta a cada chunk recebido
-    extractor: [
-        {
-            key: "content",
-            fn: (data) => ({
-                content: data.choices?.[0]?.delta?.content ?? "",
-            }),
-        },
-    ],
-});
-
-// 2. Executar — opções por requisição (body, method, extractor)
-// extractor em fetchIA sobrescreve o definido em dataFetch
-// Com encodeBytes: true — cada chunk é codificado como Uint8Array
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    method: "POST",
-    body: JSON.stringify({
-        model: "gpt-4",
-        messages: [{ role: "user", content: "Olá!" }],
-        stream: true,
-    }),
-});
-
-// 3. Ler do stream
-const reader = stream.getReader();
-while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    console.log(new TextDecoder().decode(value));
-}
-
-// --- Ou com encodeBytes: false — valores são enfileirados como strings ---
-
-const plainStream = await streamer.fetchIA({ encodeBytes: false });
-const plainReader = plainStream.getReader();
-while (true) {
-    const { done, value } = await plainReader.read();
-    if (done) break;
-    console.log(value); // value já é string, não precisa de TextDecoder
-}
-```
-
-### Referência da API
-
-#### `StreamHttpEvent`
-
-Classe principal para manipulação de streaming de eventos HTTP.
-
----
-
-##### `dataFetch(options)`
-
-Configura os parâmetros estáticos da requisição. **Deve ser chamado antes de `fetchIA()`.** Pode ser chamado uma vez e reutilizado em múltiplas chamadas `fetchIA()`.
-
-| Parâmetro | Tipo | Obrigatório | Descrição |
-|-----------|------|-------------|-----------|
-| `url` | `string` | Sim | A URL do endpoint |
-| `headers` | `Record<string, string>` | Não | Cabeçalhos HTTP (ex.: `Authorization`, `Content-Type`) |
-| `timeOut` | `number` | Não | Milissegundos máximos sem chunk antes de abortar. Reseta a cada chunk recebido. Se `0` ou omitido, sem timeout. |
-| `extractor` | `extractorType[]` | Não | Array de extratores `{ key, fn }` aplicados sobre cada chunk JSON da IA. Cada `fn` retorna um objeto mergeado no estado local; a `key` sinaliza que houve extração. Configuração estática — reutilizada em todas as chamadas `fetchIA()`. Pode ser sobrescrita por requisição passando `extractor` em `fetchIA()`. |
-
----
-
-##### `fetchIA<O>(options): Promise<ReadableStream<O> | O>`
-
-Executa a requisição HTTP. Se o `Content-Type` for `text/event-stream`, retorna uma `ReadableStream<O>` com os eventos processados. Caso contrário, faz fallback para `response.json()`.
-
-Lança erro se `dataFetch()` não tiver sido chamado antes.
-
-| Parâmetro | Tipo | Obrigatório | Descrição |
-|-----------|------|-------------|-----------|
-| `encodeBytes` | `boolean` | Não | Se `true`, cada chunk é serializado com `JSON.stringify()`, sufixado com `\n` e codificado como `Uint8Array`. Se `false` ou omitido, o mesmo valor `JSON.stringify()` é enfileirado como string (sem `\n` no final). |
-| `signal` | `AbortSignal` | Não | Repassado ao `fetch()` interno. Abortar o sinal cancela a requisição HTTP e o leitor do stream. |
-| `method` | `string` | Não | Método HTTP da requisição. Padrão `"POST"`. |
-| `body` | `any` | Não | Corpo da requisição. Normalmente `JSON.stringify(...)`. Padrão `"{}"`. |
-| `extractor` | `extractorType[]` | Não | Array de extratores `{ key, fn }` aplicados sobre cada chunk JSON já parseado. **Sobrescreve** o extrator definido em `dataFetch()` para esta requisição. Se omitido em ambos (`dataFetch` e `fetchIA`), o JSON parseado é enfileirado como está (fallback). |
-
-> **Tipagem:** `fetchIA<O>()` recebe o tipo de saída esperado como genérico. Os extratores enriquecem o JSON da IA com dados mergeados no estado local via `stateLocal`. O autocomplete flui do genérico `O` para o `ReadableStream<O>` ou `Promise<O>` retornado.
-
----
-
-### Exemplos de Uso
-
-Exemplos de provider e relay usam `encodeBytes: true` — os chunks trafegam como `Uint8Array` entre serviços, decodificados apenas no consumidor final. Use `encodeBytes: false` somente quando o stream é consumido diretamente na mesma camada (ex.: navegador chamando o provider direto).
-
-#### OpenAI (ChatGPT / GPT-4)
-
-```typescript
-const streamer = new StreamHttpEvent();
-streamer.dataFetch({
-    url: "https://api.openai.com/v1/chat/completions",
-    headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+        "Authorization": "Bearer sk-seu-token-aqui"
     },
     timeOut: 30000,
     extractor: [
         {
             key: "content",
-            fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
-        },
-    ],
-});
-
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    body: JSON.stringify({
-        model: "gpt-4",
-        messages: [{ role: "user", content: "Explique computação quântica em um parágrafo." }],
-        stream: true,
-        temperature: 0.7,
-    }),
-    extractor: [
-        {
-            key: "content",
-            fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
-        },
-    ],
-});
-```
-
-#### Anthropic (Claude)
-
-O SSE do Claude emite eventos com tipos — `content_block_delta` carrega o texto. Outros tipos (`message_start`, `message_stop`) devem ser ignorados.
-
-```typescript
-streamer.dataFetch({
-    url: "https://api.anthropic.com/v1/messages",
-    headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY!,
-        "anthropic-version": "2023-06-01",
-    },
-    extractor: [
-        {
-            key: "content",
-            fn: (data) => ({
-                content: data.type === "content_block_delta"
-                    ? data.delta?.text ?? ""
-                    : "",
-            }),
-        },
-    ],
-});
-
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    body: JSON.stringify({
-        model: "claude-3-opus-20240229",
-        max_tokens: 1024,
-        messages: [{ role: "user", content: "Explique computação quântica." }],
-        stream: true,
-    }),
-});
-```
-
-#### Google (Gemini)
-
-O Gemini usa query parameter para a API key e formato diferente de request/response.
-
-```typescript
-streamer.dataFetch({
-    url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:streamGenerateContent?key=${process.env.GEMINI_API_KEY}`,
-    headers: { "Content-Type": "application/json" },
-    extractor: [
-        {
-            key: "content",
-            fn: (data) => ({
-                content: data.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
-            }),
-        },
-    ],
-});
-
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    body: JSON.stringify({
-        contents: [{ parts: [{ text: "Explique computação quântica." }] }],
-    }),
-});
-```
-
-#### Groq (compatível com OpenAI)
-
-```typescript
-streamer.dataFetch({
-    url: "https://api.groq.com/openai/v1/chat/completions",
-    headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-    },
-    extractor: [
-        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
-    ],
-});
-
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    body: JSON.stringify({
-        model: "llama3-70b-8192",
-        messages: [{ role: "user", content: "Explique computação quântica." }],
-        stream: true,
-    }),
-});
-```
-
-#### DeepSeek (compatível com OpenAI)
-
-```typescript
-streamer.dataFetch({
-    url: "https://api.deepseek.com/v1/chat/completions",
-    headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-    },
-    extractor: [
-        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
-    ],
-});
-
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    body: JSON.stringify({
-        model: "deepseek-chat",
-        messages: [{ role: "user", content: "Explique computação quântica." }],
-        stream: true,
-    }),
-});
-```
-
-#### Cancelar com AbortController
-
-```typescript
-const controller = new AbortController();
-setTimeout(() => controller.abort(), 10000); // cancela após 10s
-
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    signal: controller.signal,
-    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-    extractor: [
-        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
-    ],
-});
-// stream.getReader().read() rejeitará com AbortError após 10s
-```
-
-#### Endpoint Express.js — retransmitir stream da IA para o navegador
-
-Use `encodeBytes: true` — o backend repassa `Uint8Array` direto para `res.write()`, mantendo os dados codificados durante o transporte. O navegador decodifica no destino final.
-
-```typescript
-app.get("/chat", async (req, res) => {
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-
-    const streamer = new StreamHttpEvent();
-    streamer.dataFetch({
-        url: "https://api.openai.com/v1/chat/completions",
-        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-    });
-
-    const stream = await streamer.fetchIA({
-        encodeBytes: true,
-        body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-        extractor: [
-            { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
-        ],
-    });
-
-    const reader = stream.getReader();
-    try {
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            res.write(value); // value é Uint8Array — repassa os bytes diretamente
-        }
-    } finally {
-        res.end();
-        reader.releaseLock();
-    }
-
-    req.on("close", () => reader.cancel());
-});
-```
-
-#### Navegador — consumir stream da IA no frontend
-
-A biblioteca funciona no navegador (target `DOM` + `ES2020`).
-
-##### Vanilla JS — consumir o endpoint Express
-
-O backend envia chunks `Uint8Array`. O navegador usa `TextDecoder` para decodificar, depois divide por `\n` e faz parse.
-
-```typescript
-const response = await fetch("/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: "Explique computação quântica." }),
-});
-
-const reader = response.body!.getReader();
-const decoder = new TextDecoder();
-const outputEl = document.getElementById("output")!;
-
-while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    const text = decoder.decode(value, { stream: true });
-    const lines = text.split("\n").filter(Boolean);
-
-    for (const line of lines) {
-        const parsed = JSON.parse(line);
-        outputEl.textContent += parsed.content;
-    }
-}
-```
-
-##### React — atualização de estado em streaming
-
-```tsx
-import { useState, useRef } from "react";
-
-function Chat() {
-    const [text, setText] = useState("");
-    const abortRef = useRef<AbortController | null>(null);
-
-    const send = async (prompt: string) => {
-        abortRef.current = new AbortController();
-        setText("");
-
-        const response = await fetch("/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt }),
-            signal: abortRef.current.signal,
-        });
-
-        const reader = response.body!.getReader();
-        const decoder = new TextDecoder();
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split("\n").filter(Boolean);
-
-            for (const line of lines) {
-                const parsed = JSON.parse(line);
-                setText((prev) => prev + parsed.content);
+            fn: (data) => {
+                const content = data.choices?.[0]?.delta?.content;
+                return content ? { content } : {};
             }
         }
-    };
+    ]
+});
 
-    const cancel = () => abortRef.current?.abort();
+async function main() {
+    const readableStream = await stream.fetchIA<string>({
+        body: JSON.stringify({
+            model: "gpt-4o",
+            messages: [{ role: "user", content: "Explique o que é Server-Sent Events" }],
+            stream: true
+        }),
+        extractor: [
+            {
+                key: "content",
+                fn: (data) => {
+                    const content = data.choices?.[0]?.delta?.content;
+                    return content ? { content } : {};
+                }
+            }
+        ]
+    }) as ReadableStream<{ content: string }>;
 
-    return (
-        <div>
-            <pre>{text}</pre>
-            <button onClick={() => send("Explique computação quântica.")}>Enviar</button>
-            <button onClick={cancel}>Cancelar</button>
-        </div>
-    );
+    const reader = readableStream.getReader();
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        process.stdout.write(JSON.parse(value as string).content);
+    }
+    console.log("\n--- Fim do stream ---");
 }
+
+main();
 ```
 
-##### Usando a lib direto no navegador
-
-Sem backend — `StreamHttpEvent` chama o provedor de IA direto do navegador. Com `encodeBytes: false` cada chunk é string, sem `TextDecoder`.
+#### 2. Streaming com cancelamento (AbortController)
 
 ```typescript
-import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
-
-const streamer = new StreamHttpEvent();
-streamer.dataFetch({
+const stream = new StreamHttpEvent();
+stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
-    },
+    headers: { "Authorization": "Bearer sk-..." },
+    timeOut: 60000
 });
 
-const stream = await streamer.fetchIA({
-    encodeBytes: false,
+const controller = new AbortController();
+
+// Cancela após 5 segundos
+setTimeout(() => {
+    controller.abort();
+    console.log("Requisição cancelada pelo usuário");
+}, 5000);
+
+const readableStream = await stream.fetchIA({
     body: JSON.stringify({
-        model: "gpt-4",
-        messages: [{ role: "user", content: "Olá!" }],
-        stream: true,
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Conte uma história longa" }],
+        stream: true
     }),
-    extractor: [
-        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
-    ],
+    signal: controller.signal
+});
+```
+
+#### 3. Consumo sem streaming (fallback JSON)
+
+```typescript
+const stream = new StreamHttpEvent();
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { "Authorization": "Bearer sk-..." }
 });
 
-const reader = stream.getReader();
-const output = document.getElementById("output")!;
+// Sem "stream: true", o endpoint retorna JSON normal
+const result = await stream.fetchIA({
+    body: JSON.stringify({
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Olá" }],
+        stream: false
+    })
+});
 
+// result é o objeto JSON completo (não é um ReadableStream)
+console.log(result.choices[0].message.content);
+```
+
+#### 4. Streaming com Anthropic (Claude)
+
+```typescript
+const stream = new StreamHttpEvent();
+stream.dataFetch({
+    url: "https://api.anthropic.com/v1/messages",
+    headers: {
+        "x-api-key": "sk-ant-seu-token",
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json"
+    },
+    timeOut: 30000,
+    extractor: [
+        {
+            key: "text",
+            fn: (data) => {
+                if (data.type === "content_block_delta") {
+                    return { text: data.delta?.text };
+                }
+                return {};
+            }
+        }
+    ]
+});
+
+const readableStream = await stream.fetchIA({
+    body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "Olá" }],
+        stream: true
+    })
+}) as ReadableStream<{ text: string }>;
+
+const reader = readableStream.getReader();
 while (true) {
-    const { done, value } = await reader.read();
+    const { value, done } = await reader.read();
     if (done) break;
-    const parsed = JSON.parse(value);
-    output.textContent += parsed.content;
+    const parsed = JSON.parse(value as string);
+    if (parsed.text) process.stdout.write(parsed.text);
 }
 ```
 
-> **Nota de segurança:** expor chaves de API no navegador é arriscado. Prefira o padrão de proxy com backend (exemplo Express acima) para aplicações em produção.
-
----
-
-**Extractors reutilizáveis** — defina os extratores como objetos `{ key, fn }` uma vez e passe-os como array em múltiplas chamadas `fetchIA()`. Provedores compatíveis com OpenAI (Groq, DeepSeek) podem compartilhar o mesmo extrator. Cada `fn` recebe o JSON parseado do chunk e retorna um objeto mergeado no estado local via `stateLocal`. A `key` sinaliza que houve extração e dispara a saída do estado acumulado. Múltiplos extratores acumulam — todos os resultados são combinados no estado.
+#### 5. Groq (LPU acelerado)
 
 ```typescript
-const openAIExtractor = {
-    key: "content",
-    fn: (data: any) => ({
-        content: data.choices?.[0]?.delta?.content ?? "",
-    }),
-};
-
-const wordCountExtractor = {
-    key: "wordCount",
-    fn: (data: any) => ({
-        wordCount: (data.choices?.[0]?.delta?.content ?? "")
-            .trim().split(/\s+/).filter(Boolean).length,
-    }),
-};
-
-// Múltiplos extratores — todos os resultados são mergeados no estado
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-    extractor: [openAIExtractor, wordCountExtractor],
-});
-
-// Extrai tool calls de respostas function-calling
-const toolCallExtractor = {
-    key: "type",
-    fn: (data: any) => {
-        const delta = data.choices?.[0]?.delta;
-        if (delta?.tool_calls?.[0]?.function?.arguments) {
-            return { type: "tool_args", data: delta.tool_calls[0].function.arguments };
-        }
-        if (delta?.content) return { type: "text", data: delta.content };
-        return {};
+const stream = new StreamHttpEvent();
+stream.dataFetch({
+    url: "https://api.groq.com/openai/v1/chat/completions",
+    headers: {
+        "Authorization": "Bearer gsk_seu-token",
+        "Content-Type": "application/json"
     },
-};
-```
-
-**Extractors tipados** — em vez de tipar internamente cada extrator, use o genérico `fetchIA<O>()`. A interface `O` define o formato de saída esperado e o autocomplete flui direto no `ReadableStream<O>` retornado.
-
-```typescript
-interface TokenChunk { content: string }
-
-const stream = await streamer.fetchIA<TokenChunk>({
-    encodeBytes: true,
-    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
     extractor: [
         {
             key: "content",
-            fn: (data) => data.choices?.[0]?.delta ?? { content: "" },
-        },
-    ],
+            fn: (data) => ({
+                content: data.choices?.[0]?.delta?.content ?? ""
+            })
+        }
+    ]
 });
 
-const reader = stream.getReader();
-const decoder = new TextDecoder();
-while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    const parsed = JSON.parse(decoder.decode(value)) as TokenChunk;
-    console.log(parsed.content);
-}
+const readableStream = await stream.fetchIA({
+    body: JSON.stringify({
+        model: "llama-3.3-70b-versatile",
+        messages: [{ role: "user", content: "Qual a capital do Brasil?" }],
+        stream: true
+    })
+}) as ReadableStream<{ content: string }>;
 ```
 
-**Headers dinâmicos** — em vez de codificar `dataFetch()` por provedor, crie uma fábrica que recebe o nome do provedor e a API key e retorna `{ url, headers, timeOut }`. Assim você troca de provedor mudando um único argumento. Dá para encapsular o fluxo completo em um helper como `streamChat(provedor, apiKey, model, messages)`.
+#### 6. Múltiplos extractors para métricas
 
 ```typescript
-function criarConfigProvedor(provedor: string, apiKey: string) {
-    const configs: Record<string, { url: string; headers: Record<string, string> }> = {
-        openai:    { url: "https://api.openai.com/v1/chat/completions",      headers: { Authorization: `Bearer ${apiKey}` } },
-        anthropic: { url: "https://api.anthropic.com/v1/messages",          headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" } },
-        groq:      { url: "https://api.groq.com/openai/v1/chat/completions",  headers: { Authorization: `Bearer ${apiKey}` } },
-    };
-    return configs[provedor];
+const stream = new StreamHttpEvent();
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { "Authorization": "Bearer sk-..." },
+    extractor: [
+        {
+            key: "content",
+            fn: (data) => ({
+                content: data.choices?.[0]?.delta?.content ?? ""
+            })
+        },
+        {
+            key: "finish_reason",
+            fn: (data) => ({
+                finish_reason: data.choices?.[0]?.finish_reason ?? ""
+            })
+        },
+        {
+            key: "usage",
+            fn: (data) => {
+                if (data.usage) {
+                    return { usage: data.usage };
+                }
+                return {};
+            }
+        }
+    ]
+});
+
+// Cada chunk enfileirado terá { content, finish_reason?, usage? }
+```
+
+#### 7. Piping do stream para arquivo (encodeBytes: true)
+
+```typescript
+const stream = new StreamHttpEvent();
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { "Authorization": "Bearer sk-..." }
+});
+
+const readableStream = await stream.fetchIA({
+    body: JSON.stringify({
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Gere um JSON grande" }],
+        stream: true
+    }),
+    encodeBytes: true   // Saída como Uint8Array
+}) as ReadableStream<Uint8Array>;
+
+// Em Node.js, gravar em arquivo:
+import { createWriteStream } from "node:fs";
+import { Writable } from "node:stream";
+
+const writeStream = createWriteStream("output.jsonl");
+const reader = readableStream.getReader();
+while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    writeStream.write(value);
+}
+writeStream.end();
+```
+
+#### 8. Servidor HTTP que faz proxy do stream (Bun/Deno/Node)
+
+```typescript
+// Usando Bun
+const stream = new StreamHttpEvent();
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { "Authorization": `Bearer ${process.env.OPENAI_API_KEY}` }
+});
+
+Bun.serve({
+    port: 3000,
+    async fetch(req) {
+        const body = await req.json();
+
+        const aiStream = await stream.fetchIA({
+            body: JSON.stringify({ ...body, stream: true }),
+            encodeBytes: true
+        }) as ReadableStream<Uint8Array>;
+
+        return new Response(aiStream, {
+            headers: { "Content-Type": "text/event-stream" }
+        });
+    }
+});
+```
+
+#### 9. Processamento em lote com múltiplos provedores
+
+```typescript
+const openaiStream = new StreamHttpEvent();
+openaiStream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { "Authorization": "Bearer sk-openai-..." },
+    timeOut: 30000
+});
+
+const groqStream = new StreamHttpEvent();
+groqStream.dataFetch({
+    url: "https://api.groq.com/openai/v1/chat/completions",
+    headers: { "Authorization": "Bearer gsk-groq-..." },
+    timeOut: 15000
+});
+
+// Dispara ambas em paralelo
+const [openaiResult, groqResult] = await Promise.all([
+    openaiStream.fetchIA({
+        body: JSON.stringify({
+            model: "gpt-4o",
+            messages: [{ role: "user", content: "Resuma em uma frase: o que é IA?" }],
+            stream: true
+        })
+    }),
+    groqStream.fetchIA({
+        body: JSON.stringify({
+            model: "llama-3.3-70b-versatile",
+            messages: [{ role: "user", content: "Resuma em uma frase: o que é IA?" }],
+            stream: true
+        })
+    })
+]);
+```
+
+---
+
+### Tipos TypeScript
+
+```typescript
+// src/type.ts
+
+interface extractorType {
+    key: string;
+    fn: (data: Record<string, any>) => Record<string, any>;
 }
 
-streamer.dataFetch(criarConfigProvedor("groq", process.env.GROQ_API_KEY!));
+interface dataFetchType {
+    url: string;
+    headers?: Record<string, string>;
+    timeOut?: number;
+    extractor?: extractorType[];
+}
+
+interface FetchOptions<O extends object = object> {
+    signal?: AbortSignal;
+    encodeBytes?: boolean;
+    method?: string;
+    body?: string;
+    extractor?: extractorType[];
+}
+
+// Tipos internos expostos para referência:
+interface bufferControlType {
+    getBuffer: () => string;
+    setBuffer: (data: string) => void;
+    add: (data: string) => void;
+}
+
+interface timeOutControlType {
+    getTime: () => ReturnType<typeof setTimeout> | undefined;
+    setTime: ({ id }: { id: ReturnType<typeof setTimeout> }) => void;
+    clearTime: () => void;
+}
+
+interface stateLocalType {
+    getState: () => unknown | undefined;
+    getStateOne: (key: string) => unknown | undefined;
+    setState: (newState: Record<string, unknown>) => void;
+    clearState: () => void;
+    clearStateByKey: (key: string) => void;
+    hasStateByKey: (key: string) => boolean;
+}
+
+interface serializeType {
+    buffer: bufferControlType;
+    controller: ReadableStreamDefaultController<any>;
+    encoder: TextEncoder;
+    extractor?: extractorType[];
+    encodeBytes: undefined | boolean;
+    state: stateLocalType;
+}
+
+interface timeoutType {
+    controller: ReadableStreamDefaultController<any>;
+    timeOutId: timeOutControlType;
+    bodyReader: ReadableStreamDefaultReader<Uint8Array<ArrayBufferLike>>;
+}
+
+interface streamIaType {
+    body: ReadableStream<Uint8Array>;
+    encodeBytes: boolean | undefined;
+    extractor?: extractorType[];
+}
 ```
 
 ---
 
-### Buffer Interno — Como Funciona
+## 📘 English
 
-Streams SSE são entregues via HTTP como um fluxo contínuo de bytes. Pacotes de rede podem dividir uma linha `data:` no meio do caminho, então a biblioteca usa um **buffer interno** para reconstruir linhas completas antes de processá-las.
+### Overview
 
-#### O Problema
+`@felipe-lib/stream-http-event` is a lightweight, **zero runtime dependency** TypeScript library for consuming streaming HTTP responses from AI providers (OpenAI, Anthropic, Groq, etc.) that use the **Server-Sent Events (SSE)** protocol (`text/event-stream`).
 
-Um único evento SSE como `data: {"token":"olá"}\n\n` pode chegar em dois chunks de rede separados:
+The library wraps the native `fetch` API and transforms raw SSE byte streams into a Web-standard **`ReadableStream`** of parsed JSON objects, with support for field extraction, inactivity timeout, and dual output encoding (bytes or string).
 
-```
-// Chunk 1: "data: {\"tok"
-// Chunk 2: "en\":\"olá\"}\n\n"
-```
-
-Sem o buffer, o chunk 1 seria lixo impossível de interpretar.
-
-#### Como o Buffer Resolve
-
-```
-┌──────────────┐     ┌─────────────────┐     ┌────────────┐     ┌──────────────┐
-│  Chunks de   │     │ bufferControl() │     │ serialize()│     │ ReadableStream│
-│  Rede        │────▶│  Acumula texto  │────▶│ Divide por │────▶│ enqueue()     │
-│  (Uint8Array)│     │  bruto          │     │ \n, guarda │     │ um por evento │
-└──────────────┘     └─────────────────┘     │ o resto    │     └──────────────┘
-                                             └────────────┘
-```
-
-**Passo a passo:**
-
-1. **Acumular** — cada chunk de rede é decodificado para texto (`TextDecoder`) e anexado ao buffer interno (`buffer.add(data)`).
-
-2. **Dividir** — `serialize()` divide o buffer por `\n`, produzindo um array de linhas.
-
-3. **Preservar o resto** — o último elemento após a divisão é mantido no buffer (`buffer.setBuffer(lines.pop())`). Este é o segredo: se uma linha estava incompleta, ela fica no buffer e aguarda o próximo chunk para se completar. Se a linha já estava completa, `lines.pop()` retorna uma string vazia (inofensivo).
-
-4. **Processar** — as linhas completas são iteradas: o prefixo `data:` é removido e o conteúdo é passado ao seu `extractor`. Linhas vazias e outros campos SSE (como `event:`, `id:`) são ignorados.
-
-5. **Enfileirar** — cada valor extraído é empurrado para a `ReadableStream` de saída. Apenas `[DONE]` fecha o stream antes da hora.
-
-```
-Exemplo com encodeBytes: true
-
-Estado do buffer ao longo dos chunks:
-─────────────────────────────────────────────────
-Chegou chunk: "data: olá\n"
-  → buffer = "data: olá\n"
-  → divide por \n → ["data: olá", ""]
-  → pop "" → buffer = ""
-  → enqueue encoder.encode('"olá"\n')  ✅ Uint8Array
-
-Chegou chunk: "data: mu"
-  → buffer = "data: mu"
-  → divide por \n → ["data: mu"]
-  → pop "data: mu" → buffer = "data: mu"  ⏳ aguarda
-
-Chegou chunk: "ndo\n"
-  → buffer = "data: mundo\n"
-  → divide por \n → ["data: mundo", ""]
-  → pop "" → buffer = ""
-  → enqueue encoder.encode('"mundo"\n')  ✅ Uint8Array
-```
-
-#### Resumo
-
-> O buffer é **interno e automático**. Você nunca interage com ele diretamente. Ele existe apenas para lidar com a fragmentação da rede e é **independente da configuração `encodeBytes`** — funciona da mesma forma seja `true` ou `false`.
-
-### Build
-
-```bash
-pnpm build
-```
-
-Usa TypeScript (`ES2020` / `ESM`), com target `DOM` + `ES2020`.
+**Supported environments:** Modern browsers, Node.js 18+, Deno, Bun, Cloudflare Workers — any runtime with `fetch`, `ReadableStream`, `TextDecoder`, and `TextEncoder`.
 
 ---
-
-### Fluxo Interno
-
-Cada chamada `fetchIA()` segue este pipeline de execução:
-
-```
-dataFetch()  →  fetchIA()  →  fetch()  →  streamIA()  →  ReadableStream
-  (config)       (requisição)  (HTTP)      (fábrica)       (saída)
-```
-
-**1. `dataFetch({ url, headers, timeOut, extractor })`**
-Armazena a config estática nos campos da instância. Nenhuma requisição é feita. Pode ser chamado uma vez e reutilizado em múltiplos `fetchIA()`.
-
-**2. `fetchIA({ encodeBytes, signal, method, body, extractor })`**
-Valida se `url` está definida, depois chama `fetch()` com os parâmetros configurados. Verifica status e content-type da resposta:
-- `text/event-stream` → delega para `streamIA()` criar o stream de saída
-- Outro content-type → fallback para `response.json()`
-
-**3. `streamIA(body, encodeBytes, extractor)`**
-Cria o `ReadableStream` de saída. Internamente configura:
-- `bodyReader` — lê chunks brutos da rede da resposta HTTP
-- `bufferControl` — acumulador de linhas SSE parciais
-- `timeOutControl` — gerencia `setTimeout`/`clearTimeout`
-- `stateLocal` — estado em memória para acumular dados extraídos
-- `TextDecoder`/`TextEncoder` — conversão texto ↔ bytes
-
-**4. Loop de leitura** (dentro do callback do `ReadableStream`)
-```
-inicia timeout → while(true):
-  lê chunk da rede
-  decodifica Uint8Array → texto, anexa ao buffer
-  reinicia timeout (cada chunk estende o prazo)
-  serialize() — processa linhas SSE completas
-  se [DONE] → limpa timeout, fecha stream
-em erro → limpa timeout, propaga erro
-finally → libera lock do reader
-```
-
-**5. `serialize(buffer, controller, encoder, extractor, encodeBytes, state)`**
-```
-buffer.split("\n")          → divide o texto acumulado por linhas
-lines.pop() → volta ao buffer → guarda linha incompleta para o próximo chunk
-
-para cada linha completa:
-  linha vazia?      → pula
-  contém [DONE]?    → fecha stream, retorna
-  começa com data:? → remove prefixo, faz JSON.parse
-                       extractor? → state.setState(fn.fn(parsedData));
-                                    se state.hasStateByKey(fn.key): snapshot do estado
-                                    se não: fallback para parsedData bruto
-                       encodeBytes?
-                         true  → enqueue Uint8Array com \n no final
-                         false → enqueue string pura
-                       state.clearState() → reseta para o próximo chunk
-```
-
-**6. `timeout(controller, timeOutId, bodyReader)`**
-```
-se timer ativo existe → limpa
-se this.timeOut > 0 → setTimeout(timeOut ms):
-  controller.error()   → encerra o stream de saída
-  bodyReader.cancel()  → fecha a leitura da rede
-```
-`error()` e `cancel()` juntos matam a conexão com o provedor de IA.
-
----
-
----
-
-## License
-
-ISC
-
-## English
-
-A lightweight TypeScript library for consuming **Server-Sent Events (SSE)** over HTTP — built specifically for streaming responses from AI/LLM APIs.
-
-### Features
-
-- Configurable HTTP method (defaults to `POST`), headers and body
-- Parses `text/event-stream` (SSE) responses in real-time via `ReadableStream`
-- Handles partial/incomplete chunks across network boundaries with an internal buffer
-- User-defined **extractor** array — `{ key, fn }` objects where `fn` receives the chunk's already-parsed JSON and returns data merged into local state via `stateLocal`; `key` signals extraction occurred and triggers output of accumulated state (optional, falls back to raw chunk)
-- Detects `[DONE]` as the stream termination signal
-- Optional `timeOut` to abort hanging connections (resets on each received chunk)
-- Optionally encodes output as `Uint8Array` bytes (ideal for piping into further streams)
-- Falls back to `response.json()` for non-streaming responses
 
 ### Installation
 
 ```bash
 npm install @felipe-lib/stream-http-event
-```
-
-### Quick Start
-
-```typescript
-import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
-
-const streamer = new StreamHttpEvent();
-
-// 1. Static config — reusable across multiple fetchIA() calls
-streamer.dataFetch({
-    url: "https://api.openai.com/v1/chat/completions",
-    headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-    },
-    timeOut: 30000, // 30s timeout, resets on each chunk received
-    extractor: [
-        {
-            key: "content",
-            fn: (data) => ({
-                content: data.choices?.[0]?.delta?.content ?? "",
-            }),
-        },
-    ],
-});
-
-// 2. Execute — pass per-request options (body, method, extractor)
-// extractor in fetchIA overrides the one set in dataFetch
-// With encodeBytes: true — each chunk is encoded as Uint8Array
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    method: "POST",
-    body: JSON.stringify({
-        model: "gpt-4",
-        messages: [{ role: "user", content: "Hello!" }],
-        stream: true,
-    }),
-});
-
-// 3. Read from the stream
-const reader = stream.getReader();
-while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    console.log(new TextDecoder().decode(value));
-}
-
-// --- Or with encodeBytes: false — values are enqueued as plain strings ---
-
-const plainStream = await streamer.fetchIA({ encodeBytes: false });
-const plainReader = plainStream.getReader();
-while (true) {
-    const { done, value } = await plainReader.read();
-    if (done) break;
-    console.log(value); // value is already a string, no TextDecoder needed
-}
-```
-
-### API Reference
-
-#### `StreamHttpEvent`
-
-Main class for streaming HTTP event handling.
-
----
-
-##### `dataFetch(options)`
-
-Configures the static request parameters. **Must be called before `fetchIA()`.** Can be called once and reused across multiple `fetchIA()` calls.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `url` | `string` | Yes | The endpoint URL |
-| `headers` | `Record<string, string>` | No | HTTP headers (e.g., `Authorization`, `Content-Type`) |
-| `timeOut` | `number` | No | Max milliseconds without a chunk before aborting. Resets on each received chunk. If `0` or omitted, no timeout is enforced. |
-| `extractor` | `extractorType[]` | No | Array of `{ key, fn }` extractor objects applied to each AI JSON chunk. Each `fn` returns an object merged into local state; `key` signals extraction occurred. Static config — reused across all `fetchIA()` calls. Can be overridden per request by passing `extractor` in `fetchIA()`. |
-
----
-
-##### `fetchIA<O>(options): Promise<ReadableStream<O> | O>`
-
-Executes the HTTP request. If the response `Content-Type` is `text/event-stream`, returns a `ReadableStream<O>` with parsed events. Otherwise, falls back to `response.json()`.
-
-Throws an error if `dataFetch()` was not called beforehand.
-
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `encodeBytes` | `boolean` | No | If `true`, each extracted chunk is `JSON.stringify()`-ed, suffixed with `\n`, and encoded as `Uint8Array`. If `false` or omitted, the same `JSON.stringify()`-ed value is enqueued as a plain string (no trailing `\n`). |
-| `signal` | `AbortSignal` | No | Passed to the underlying `fetch()` call. Aborting the signal cancels the HTTP request and the stream reader. |
-| `method` | `string` | No | HTTP method for the request. Defaults to `"POST"`. |
-| `body` | `any` | No | Request body. Typically `JSON.stringify(...)`. Defaults to `"{}"`. |
-| `extractor` | `extractorType[]` | No | Array of `{ key, fn }` extractor objects applied to each already-parsed JSON chunk. **Overrides** the extractor set in `dataFetch()` for this request. If omitted in both (`dataFetch` and `fetchIA`), the parsed JSON is enqueued as-is (fallback). |
-
-> **Typing:** `fetchIA<O>()` accepts the expected output type as a generic. Extractors enrich the AI JSON with data merged into local state via `stateLocal`. Autocomplete flows from the `O` generic into the returned `ReadableStream<O>` or `Promise<O>`.
-
----
-
-### Usage Examples
-
-Provider and relay examples use `encodeBytes: true` — chunks travel as `Uint8Array` between services, decoded only at the final consumer. Use `encodeBytes: false` only when the stream is consumed directly at the same layer (e.g. browser calling the provider directly).
-
-#### OpenAI (ChatGPT / GPT-4)
-
-```typescript
-const streamer = new StreamHttpEvent();
-streamer.dataFetch({
-    url: "https://api.openai.com/v1/chat/completions",
-    headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-    },
-    timeOut: 30000,
-    extractor: [
-        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
-    ],
-});
-
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    body: JSON.stringify({
-        model: "gpt-4",
-        messages: [{ role: "user", content: "Explain quantum computing in one paragraph." }],
-        stream: true,
-        temperature: 0.7,
-    }),
-});
-```
-
-#### Anthropic (Claude)
-
-Claude SSE emits typed events — `content_block_delta` carries the text. Other event types (e.g. `message_start`, `message_stop`) should be skipped.
-
-```typescript
-streamer.dataFetch({
-    url: "https://api.anthropic.com/v1/messages",
-    headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY!,
-        "anthropic-version": "2023-06-01",
-    },
-    extractor: [
-        {
-            key: "content",
-            fn: (data) => ({
-                content: data.type === "content_block_delta"
-                    ? data.delta?.text ?? ""
-                    : "",
-            }),
-        },
-    ],
-});
-
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    body: JSON.stringify({
-        model: "claude-3-opus-20240229",
-        max_tokens: 1024,
-        messages: [{ role: "user", content: "Explain quantum computing." }],
-        stream: true,
-    }),
-});
-```
-
-#### Google (Gemini)
-
-Gemini uses a query parameter for the API key and a different request/response shape.
-
-```typescript
-streamer.dataFetch({
-    url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:streamGenerateContent?key=${process.env.GEMINI_API_KEY}`,
-    headers: { "Content-Type": "application/json" },
-    extractor: [
-        {
-            key: "content",
-            fn: (data) => ({
-                content: data.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
-            }),
-        },
-    ],
-});
-
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    body: JSON.stringify({
-        contents: [{ parts: [{ text: "Explain quantum computing." }] }],
-    }),
-});
-```
-
-#### Groq (OpenAI-compatible)
-
-```typescript
-streamer.dataFetch({
-    url: "https://api.groq.com/openai/v1/chat/completions",
-    headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-    },
-    extractor: [
-        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
-    ],
-});
-
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    body: JSON.stringify({
-        model: "llama3-70b-8192",
-        messages: [{ role: "user", content: "Explain quantum computing." }],
-        stream: true,
-    }),
-});
-```
-
-#### DeepSeek (OpenAI-compatible)
-
-```typescript
-streamer.dataFetch({
-    url: "https://api.deepseek.com/v1/chat/completions",
-    headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-    },
-    extractor: [
-        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
-    ],
-});
-
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    body: JSON.stringify({
-        model: "deepseek-chat",
-        messages: [{ role: "user", content: "Explain quantum computing." }],
-        stream: true,
-    }),
-});
-```
-
-#### Cancel with AbortController
-
-```typescript
-const controller = new AbortController();
-setTimeout(() => controller.abort(), 10000); // cancel after 10s
-
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    signal: controller.signal,
-    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-    extractor: [
-        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
-    ],
-});
-// stream.getReader().read() will reject with AbortError after 10s
-```
-
-#### Express.js endpoint — relay AI stream to browser
-
-Use `encodeBytes: true` — the backend passes `Uint8Array` chunks directly to `res.write()`, keeping data encoded during transport. The browser decodes at the final step.
-
-```typescript
-app.get("/chat", async (req, res) => {
-    res.setHeader("Content-Type", "text/event-stream");
-    res.setHeader("Cache-Control", "no-cache");
-    res.setHeader("Connection", "keep-alive");
-
-    const streamer = new StreamHttpEvent();
-    streamer.dataFetch({
-        url: "https://api.openai.com/v1/chat/completions",
-        headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-    });
-
-    const stream = await streamer.fetchIA({
-        encodeBytes: true,
-        body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-        extractor: [
-            { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
-        ],
-    });
-
-    const reader = stream.getReader();
-    try {
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            res.write(value); // value is Uint8Array — pass bytes directly
-        }
-    } finally {
-        res.end();
-        reader.releaseLock();
-    }
-
-    req.on("close", () => reader.cancel());
-});
-```
-
-#### Browser — consume AI stream from the frontend
-
-The library works in the browser (targets `DOM` + `ES2020`).
-
-##### Vanilla JS — fetch the Express endpoint
-
-The backend sends `Uint8Array` chunks. The browser uses `TextDecoder` to decode, then splits by `\n` and parses.
-
-```typescript
-const response = await fetch("/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: "Explain quantum computing." }),
-});
-
-const reader = response.body!.getReader();
-const decoder = new TextDecoder();
-const outputEl = document.getElementById("output")!;
-
-while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-
-    const text = decoder.decode(value, { stream: true });
-    const lines = text.split("\n").filter(Boolean);
-
-    for (const line of lines) {
-        const parsed = JSON.parse(line);
-        outputEl.textContent += parsed.content;
-    }
-}
-```
-
-##### React — streaming state update
-
-```tsx
-import { useState, useRef } from "react";
-
-function Chat() {
-    const [text, setText] = useState("");
-    const abortRef = useRef<AbortController | null>(null);
-
-    const send = async (prompt: string) => {
-        abortRef.current = new AbortController();
-        setText("");
-
-        const response = await fetch("/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt }),
-            signal: abortRef.current.signal,
-        });
-
-        const reader = response.body!.getReader();
-        const decoder = new TextDecoder();
-
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            const chunk = decoder.decode(value, { stream: true });
-            const lines = chunk.split("\n").filter(Boolean);
-
-            for (const line of lines) {
-                const parsed = JSON.parse(line);
-                setText((prev) => prev + parsed.content);
-            }
-        }
-    };
-
-    const cancel = () => abortRef.current?.abort();
-
-    return (
-        <div>
-            <pre>{text}</pre>
-            <button onClick={() => send("Explain quantum computing.")}>Send</button>
-            <button onClick={cancel}>Cancel</button>
-        </div>
-    );
-}
-```
-
-##### Using the lib directly in the browser
-
-No backend needed — `StreamHttpEvent` calls the AI provider straight from the browser. With `encodeBytes: false` each chunk is a string, no `TextDecoder`.
-
-```typescript
-import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
-
-const streamer = new StreamHttpEvent();
-streamer.dataFetch({
-    url: "https://api.openai.com/v1/chat/completions",
-    headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${import.meta.env.VITE_OPENAI_API_KEY}`,
-    },
-});
-
-const stream = await streamer.fetchIA({
-    encodeBytes: false,
-    body: JSON.stringify({
-        model: "gpt-4",
-        messages: [{ role: "user", content: "Hello!" }],
-        stream: true,
-    }),
-    extractor: [
-        { key: "content", fn: (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }) },
-    ],
-});
-
-const reader = stream.getReader();
-const output = document.getElementById("output")!;
-
-while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    const parsed = JSON.parse(value);
-    output.textContent += parsed.content;
-}
-```
-
-> **Security note:** exposing API keys in the browser is risky. Prefer the backend proxy pattern (Express example above) for production apps.
-
----
-
-**Reusable extractors** — define extractors as `{ key, fn }` objects once and pass them as an array across multiple `fetchIA()` calls. Providers like Groq and DeepSeek (OpenAI-compatible) can share the same extractor. Each `fn` receives the chunk's already-parsed JSON and returns an object merged into local state via `stateLocal`. The `key` signals extraction occurred and triggers output of the accumulated state. Multiple extractors accumulate — all results are combined in the state.
-
-```typescript
-const openAIExtractor = {
-    key: "content",
-    fn: (data: any) => ({
-        content: data.choices?.[0]?.delta?.content ?? "",
-    }),
-};
-
-const wordCountExtractor = {
-    key: "wordCount",
-    fn: (data: any) => ({
-        wordCount: (data.choices?.[0]?.delta?.content ?? "")
-            .trim().split(/\s+/).filter(Boolean).length,
-    }),
-};
-
-// Multiple extractors — all results are merged into state
-const stream = await streamer.fetchIA({
-    encodeBytes: true,
-    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-    extractor: [openAIExtractor, wordCountExtractor],
-});
-
-// Extract tool calls from function-calling responses
-const toolCallExtractor = {
-    key: "type",
-    fn: (data: any) => {
-        const delta = data.choices?.[0]?.delta;
-        if (delta?.tool_calls?.[0]?.function?.arguments) {
-            return { type: "tool_args", data: delta.tool_calls[0].function.arguments };
-        }
-        if (delta?.content) return { type: "text", data: delta.content };
-        return {};
-    },
-};
-```
-
-**Typed extractors** — instead of typing each extractor internally, use the `fetchIA<O>()` generic. The `O` interface defines the expected output shape, and autocomplete flows into the returned `ReadableStream<O>`.
-
-```typescript
-interface TokenChunk { content: string }
-
-const stream = await streamer.fetchIA<TokenChunk>({
-    encodeBytes: true,
-    body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-    extractor: [
-        {
-            key: "content",
-            fn: (data) => data.choices?.[0]?.delta ?? { content: "" },
-        },
-    ],
-});
-
-const reader = stream.getReader();
-const decoder = new TextDecoder();
-while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    const parsed = JSON.parse(decoder.decode(value)) as TokenChunk;
-    console.log(parsed.content);
-}
-```
-
-**Dynamic headers** — instead of hardcoding `dataFetch()` per provider, build a factory that receives the provider name and API key and returns `{ url, headers, timeOut }`. This lets you switch providers by changing a single argument. You can wrap the full flow into a helper like `streamChat(provider, apiKey, model, messages)`.
-
-```typescript
-function createProviderConfig(provider: string, apiKey: string) {
-    const configs: Record<string, { url: string; headers: Record<string, string> }> = {
-        openai:  { url: "https://api.openai.com/v1/chat/completions",      headers: { Authorization: `Bearer ${apiKey}` } },
-        anthropic: { url: "https://api.anthropic.com/v1/messages",          headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01" } },
-        groq:    { url: "https://api.groq.com/openai/v1/chat/completions",  headers: { Authorization: `Bearer ${apiKey}` } },
-    };
-    return configs[provider];
-}
-
-streamer.dataFetch(createProviderConfig("groq", process.env.GROQ_API_KEY!));
+# or
+pnpm add @felipe-lib/stream-http-event
 ```
 
 ---
 
-### Internal Buffer — How It Works
+### Features
 
-SSE streams are delivered over HTTP as a continuous flow of bytes. Network packets can split a `data:` line mid-stream, so the library uses an **internal buffer** to reconstruct complete lines before processing them.
+- **SSE → ReadableStream** — Converts `text/event-stream` responses into streams of parsed JSON objects
+- **Smart buffering** — Handles network chunks that arrive mid-line in SSE data
+- **Inactivity timeout** — Automatically errors the stream if the provider stops sending data
+- **Extractor system** — Maps raw AI response shapes into custom output objects
+- **Dual encoding** — Output as `string` (raw JSON) or `Uint8Array` (encoded bytes)
+- **`[DONE]` detection** — Recognizes the standard SSE stream termination signal
+- **JSON fallback** — If the endpoint doesn't return `text/event-stream`, parses it as plain JSON
+- **AbortSignal support** — Cancellation via `AbortController`
+
+---
+
+### API
+
+#### `dataFetch(config: dataFetchType): void`
+
+Configures the instance before making requests. Must be called before `fetchIA()`.
+
+```typescript
+type dataFetchType = {
+    url: string;                        // AI provider endpoint URL
+    headers?: Record<string, string>;   // Custom HTTP headers (e.g., Authorization)
+    timeOut?: number;                   // Inactivity timeout in ms
+    extractor?: extractorType[];        // Default extractors for all calls
+}
+```
+
+#### `fetchIA<O extends object>(options: FetchOptions): Promise<ReadableStream<O> | O>`
+
+Executes the HTTP request and returns the result. If the response `content-type` is `text/event-stream`, returns a `ReadableStream<O>`. Otherwise, parses the response as JSON and returns object `O`.
+
+```typescript
+type FetchOptions<O extends object = object> = {
+    signal?: AbortSignal;       // Cancellation signal
+    encodeBytes?: boolean;      // true = Uint8Array, false/undefined = string
+    method?: string;            // HTTP method (default: "POST")
+    body?: string;              // Request body (JSON string)
+    extractor?: extractorType[];// Call-specific extractors (overrides defaults)
+}
+```
+
+---
+
+### How the Buffer Works
+
+The buffer solves a fundamental problem of network streaming: **byte chunks arrive in arbitrary sizes that can cut through the middle of SSE lines**.
 
 #### The Problem
 
-A single SSE event like `data: {"token":"hello"}\n\n` may arrive in two separate network chunks:
+SSE data from an AI provider arrives like this:
 
 ```
-// Chunk 1: "data: {\"tok"
-// Chunk 2: "en\":\"hello\"}\n\n"
+data: {"choices":[{"delta":{"content":"Hello"}}]}
+
+data: {"choices":[{"delta":{"content":" world"}}]}
+
+data: [DONE]
 ```
 
-Without buffering, chunk 1 would be unparseable garbage.
-
-#### How the Buffer Solves It
+But the network delivers chunks unpredictably:
 
 ```
-┌──────────────┐     ┌─────────────────┐     ┌────────────┐     ┌──────────────┐
-│  Network     │     │ bufferControl() │     │ serialize()│     │ ReadableStream│
-│  Chunks      │────▶│  Accumulates    │────▶│ Splits by  │────▶│ enqueue()     │
-│  (Uint8Array)│     │  raw text       │     │ \n, keeps  │     │ one per event │
-└──────────────┘     └─────────────────┘     │ remainder  │     └──────────────┘
-                                             └────────────┘
+Chunk 1: "data: {\"choices\":[{\"delta\":{\"content\":\"Hel"
+Chunk 2: "lo\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\" wor"
+Chunk 3: "ld\"}}]}\n\ndata: [DONE]\n\n"
 ```
 
-**Step by step:**
+Without buffering, calling `.split("\n")` on Chunk 1 would produce an incomplete line that isn't valid JSON.
 
-1. **Accumulate** — each network chunk is decoded to text (`TextDecoder`) and appended to the internal buffer (`buffer.add(data)`).
+#### The Solution
 
-2. **Split** — `serialize()` splits the buffer by `\n`, producing an array of lines.
+The buffer's core is the `bufferControl()` method (`src/streamHttpEvent.ts:42-54`):
 
-3. **Preserve remainder** — the last element after splitting is kept in the buffer (`buffer.setBuffer(lines.pop())`). This is the key: if a line was incomplete, it stays in the buffer and waits for the next chunk to complete it. If the line was complete, `lines.pop()` returns an empty string (harmless).
+```typescript
+private bufferControl() {
+    let buffer = "";
 
-4. **Process** — complete lines are iterated: `data:` lines have their prefix stripped and are passed to your `extractor`. Empty lines and other SSE fields (like `event:`, `id:`) are skipped.
-
-5. **Enqueue** — each extracted value is pushed into the output `ReadableStream`. Only `[DONE]` closes the stream early.
-
-```
-Example with encodeBytes: true
-
-Buffer state across chunks:
-─────────────────────────────────────────────────
-Chunk arrives: "data: hello\n"
-  → buffer = "data: hello\n"
-  → split by \n → ["data: hello", ""]
-  → pop "" → buffer = ""
-  → enqueue encoder.encode('"hello"\n')  ✅ Uint8Array
-
-Chunk arrives: "data: wo"
-  → buffer = "data: wo"
-  → split by \n → ["data: wo"]
-  → pop "data: wo" → buffer = "data: wo"  ⏳ waits
-
-Chunk arrives: "rld\n"
-  → buffer = "data: world\n"
-  → split by \n → ["data: world", ""]
-  → pop "" → buffer = ""
-  → enqueue encoder.encode('"world"\n')  ✅ Uint8Array
+    return {
+        getBuffer: () => buffer,
+        setBuffer: (data: string) => { buffer = data; },
+        add: (data: string) => { buffer += data; },
+    };
+}
 ```
 
-#### Key Takeaway
+Three simple operations:
+1. **`add(data)`** — Appends each newly decoded chunk to the buffer
+2. **`getBuffer()`** — Returns the current buffer contents
+3. **`setBuffer(data)`** — Replaces the entire buffer (used to retain incomplete lines)
 
-> The buffer is **internal and automatic**. You never interact with it directly. It exists solely to handle network fragmentation and is **independent of the `encodeBytes` setting** — it works the same way whether you choose `true` or `false`.
+#### The Serialization Algorithm
 
-### Build
+In the `serialize()` method (`src/streamHttpEvent.ts:91-153`):
 
-```bash
-pnpm build
+```typescript
+const lines = buffer.getBuffer().split("\n");   // Split buffer by newlines
+buffer.setBuffer(lines.pop() ?? "");             // The last (possibly incomplete) line goes back into the buffer
 ```
 
-Uses TypeScript (`ES2020` / `ESM` output) targeting `DOM` + `ES2020` types.
+This is the **key insight**:
+- `.split("\n")` breaks the entire buffer into lines
+- `lines.pop()` removes and **keeps the last element** — this could be an incomplete line that hasn't received its `\n` yet
+- The remaining lines are **guaranteed to be complete** (terminated by `\n`)
+- The incomplete fragment is stored back in the buffer via `setBuffer()`, waiting for the next chunk
+
+#### Step-by-Step Example
+
+```
+INITIAL STATE: buffer = ""
+
+--- Chunk 1 arrives: "data: {\"content\":\"Hel" ---
+buffer.add() → buffer = "data: {\"content\":\"Hel"
+split("\n") → ["data: {\"content\":\"Hel"]
+lines.pop() → "data: {\"content\":\"Hel" (goes back into buffer)
+No complete lines to process.
+
+--- Chunk 2 arrives: "lo\"}\n\ndata: {\"content\":\"Wo" ---
+buffer before: "data: {\"content\":\"Hel"
+buffer.add() → buffer = "data: {\"content\":\"Hello\"}\n\ndata: {\"content\":\"Wo"
+split("\n") → ["data: {\"content\":\"Hello\"}", "", "data: {\"content\":\"Wo"]
+lines.pop() → "data: {\"content\":\"Wo" (incomplete, goes back into buffer)
+Complete lines:
+  - "data: {\"content\":\"Hello\"}" → JSON.parse → enqueued ✓
+  - "" (empty line) → skipped
+
+--- Chunk 3 arrives: "rld\"}\n\ndata: [DONE]\n\n" ---
+buffer before: "data: {\"content\":\"Wo"
+buffer.add() → buffer = "data: {\"content\":\"World\"}\n\ndata: [DONE]\n\n"
+split("\n") → ["data: {\"content\":\"World\"}", "", "data: [DONE]", "", ""]
+lines.pop() → "" (empty, harmless)
+Complete lines:
+  - "data: {\"content\":\"World\"}" → enqueued ✓
+  - "" → skipped
+  - "data: [DONE]" → detected → stream closed ✓
+```
 
 ---
 
-### Internal Flow
+### Extractor System
 
-Every `fetchIA()` call follows this execution pipeline:
+Extractors map raw AI response shapes into custom formats, extracting only the desired fields.
 
-```
-dataFetch()  →  fetchIA()  →  fetch()  →  streamIA()  →  ReadableStream
-  (config)       (request)     (HTTP)      (factory)       (output)
-```
+**Type definition:**
 
-**1. `dataFetch({ url, headers, timeOut, extractor })`**
-Stores static config in instance fields. No request is made. Can be called once and reused across multiple `fetchIA()` calls.
-
-**2. `fetchIA({ encodeBytes, signal, method, body, extractor })`**
-Validates that `url` is set, then calls `fetch()` with the configured parameters. Checks response status and content type:
-- `text/event-stream` → delegates to `streamIA()` to create the output stream
-- Any other content type → falls back to `response.json()`
-
-**3. `streamIA(body, encodeBytes, extractor)`**
-Creates the output `ReadableStream`. Internally sets up:
-- `bodyReader` — reads raw network chunks from the HTTP response
-- `bufferControl` — accumulator for partial SSE lines
-- `timeOutControl` — manages `setTimeout`/`clearTimeout`
-- `stateLocal` — in-memory state for accumulating extracted data
-- `TextDecoder`/`TextEncoder` — text ↔ bytes conversion
-
-**4. Read loop** (inside the `ReadableStream` callback)
-```
-start timeout → while(true):
-  read chunk from network
-  decode Uint8Array → text, append to buffer
-  reset timeout (each chunk extends the deadline)
-  serialize() — process complete SSE lines
-  if [DONE] → clear timeout, close stream
-on error → clear timeout, propagate error
-finally → release reader lock
+```typescript
+interface extractorType {
+    key: string;                                         // Key name in the extracted state
+    fn: (data: Record<string, any>) => Record<string, any>; // Function receiving parsed JSON, returning an object
+}
 ```
 
-**5. `serialize(buffer, controller, encoder, extractor, encodeBytes, state)`**
-```
-buffer.split("\n")          → split accumulated text into lines
-lines.pop() → back to buffer → keep incomplete line for next chunk
+**Example with OpenAI:**
 
-for each complete line:
-  empty line?        → skip
-  contains [DONE]?   → close stream, return
-  starts with data:? → strip prefix, JSON.parse
-                        extractor? → state.setState(fn.fn(parsedData));
-                                     if state.hasStateByKey(fn.key): snapshot state
-                                     else: fall back to raw parsedData
-                        encodeBytes?
-                          true  → enqueue Uint8Array with trailing \n
-                          false → enqueue plain string
-                        state.clearState() → reset for next chunk
+```typescript
+const extractors: extractorType[] = [
+    {
+        key: "content",
+        fn: (data) => {
+            const content = data.choices?.[0]?.delta?.content;
+            return content ? { content } : {};
+        }
+    },
+    {
+        key: "role",
+        fn: (data) => {
+            const role = data.choices?.[0]?.delta?.role;
+            return role ? { role } : {};
+        }
+    }
+];
 ```
 
-**6. `timeout(controller, timeOutId, bodyReader)`**
+**Behavior:**
+- Each extractor runs in order for every parsed `data:` line
+- Each `fn()` result is merged into a shared state map
+- If, after all extractors execute, **at least one key** (from the extractor definitions) exists in the state, the accumulated state object is enqueued **instead** of the raw JSON
+- State is cleared between each processed `data:` line
+
+**What arrives in the stream without extractor:**
+```json
+{"id":"chatcmpl-xxx","choices":[{"delta":{"content":"Hello","role":"assistant"}}]}
 ```
-if active timer exists → clear it
-if this.timeOut > 0 → setTimeout(timeOut ms):
-  controller.error()   → terminates output stream
-  bodyReader.cancel()  → closes network read
+
+**What arrives in the stream with extractor:**
+```json
+{"content":"Hello","role":"assistant"}
 ```
-Both `error()` and `cancel()` together kill the connection to the AI provider.
 
 ---
+
+### Timeout Mechanism
+
+The timeout is **inactivity-based** between chunks — it does not limit total request duration. The timer resets every time a network chunk is received and processed.
+
+```typescript
+// 10-second inactivity timeout
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { "Authorization": "Bearer sk-..." },
+    timeOut: 10000
+});
+```
+
+**Behavior:**
+1. Timer starts upon receiving the first chunk
+2. Each new chunk resets the timer
+3. If time expires without new data:
+   - The `ReadableStream` controller emits an error: `"Ops, Sua provedor de IA demorou mais de {timeOut}ms"` (Portuguese: "Oops, your AI provider took more than {timeOut}ms")
+   - The `bodyReader` is cancelled (aborting the underlying fetch)
+4. If the stream ends normally (`[DONE]` or body end), the timer is cleared
+
+**Implementation:** `src/streamHttpEvent.ts:72-89` and `src/streamHttpEvent.ts:56-70`
+
+---
+
+### Encoding Modes (`encodeBytes`)
+
+The `encodeBytes` parameter controls the `ReadableStream` output format:
+
+| `encodeBytes` | Each chunk type | Use case |
+|---|---|---|
+| `false` or `undefined` | `string` (raw JSON) | Direct consumption in code, easy to log and debug |
+| `true` | `Uint8Array` | Piping to another stream, writing to files, binary consumption |
+
+**Example with `encodeBytes: false`:**
+```typescript
+const stream = await stream.fetchIA({ encodeBytes: false });
+// stream.getReader().read() → { value: '{"content":"Hello"}', done: false }
+```
+
+**Example with `encodeBytes: true`:**
+```typescript
+const stream = await stream.fetchIA({ encodeBytes: true });
+// stream.getReader().read() → { value: Uint8Array([...]), done: false }
+// Each chunk is the JSON string + "\n" encoded as UTF-8
+```
+
+---
+
+### Use Cases
+
+#### 1. Chat streaming with OpenAI (ChatGPT)
+
+```typescript
+import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
+
+const stream = new StreamHttpEvent();
+
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer sk-your-token-here"
+    },
+    timeOut: 30000,
+    extractor: [
+        {
+            key: "content",
+            fn: (data) => {
+                const content = data.choices?.[0]?.delta?.content;
+                return content ? { content } : {};
+            }
+        }
+    ]
+});
+
+async function main() {
+    const readableStream = await stream.fetchIA<string>({
+        body: JSON.stringify({
+            model: "gpt-4o",
+            messages: [{ role: "user", content: "Explain Server-Sent Events" }],
+            stream: true
+        }),
+        extractor: [
+            {
+                key: "content",
+                fn: (data) => {
+                    const content = data.choices?.[0]?.delta?.content;
+                    return content ? { content } : {};
+                }
+            }
+        ]
+    }) as ReadableStream<{ content: string }>;
+
+    const reader = readableStream.getReader();
+    while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        process.stdout.write(JSON.parse(value as string).content);
+    }
+    console.log("\n--- End of stream ---");
+}
+
+main();
+```
+
+#### 2. Streaming with cancellation (AbortController)
+
+```typescript
+const stream = new StreamHttpEvent();
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { "Authorization": "Bearer sk-..." },
+    timeOut: 60000
+});
+
+const controller = new AbortController();
+
+// Cancel after 5 seconds
+setTimeout(() => {
+    controller.abort();
+    console.log("Request cancelled by user");
+}, 5000);
+
+const readableStream = await stream.fetchIA({
+    body: JSON.stringify({
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Tell a long story" }],
+        stream: true
+    }),
+    signal: controller.signal
+});
+```
+
+#### 3. Non-streaming consumption (JSON fallback)
+
+```typescript
+const stream = new StreamHttpEvent();
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { "Authorization": "Bearer sk-..." }
+});
+
+// Without "stream: true", the endpoint returns regular JSON
+const result = await stream.fetchIA({
+    body: JSON.stringify({
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Hello" }],
+        stream: false
+    })
+});
+
+// result is the full JSON object (not a ReadableStream)
+console.log(result.choices[0].message.content);
+```
+
+#### 4. Streaming with Anthropic (Claude)
+
+```typescript
+const stream = new StreamHttpEvent();
+stream.dataFetch({
+    url: "https://api.anthropic.com/v1/messages",
+    headers: {
+        "x-api-key": "sk-ant-your-token",
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json"
+    },
+    timeOut: 30000,
+    extractor: [
+        {
+            key: "text",
+            fn: (data) => {
+                if (data.type === "content_block_delta") {
+                    return { text: data.delta?.text };
+                }
+                return {};
+            }
+        }
+    ]
+});
+
+const readableStream = await stream.fetchIA({
+    body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "Hello" }],
+        stream: true
+    })
+}) as ReadableStream<{ text: string }>;
+
+const reader = readableStream.getReader();
+while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    const parsed = JSON.parse(value as string);
+    if (parsed.text) process.stdout.write(parsed.text);
+}
+```
+
+#### 5. Groq (LPU accelerated)
+
+```typescript
+const stream = new StreamHttpEvent();
+stream.dataFetch({
+    url: "https://api.groq.com/openai/v1/chat/completions",
+    headers: {
+        "Authorization": "Bearer gsk_your-token",
+        "Content-Type": "application/json"
+    },
+    extractor: [
+        {
+            key: "content",
+            fn: (data) => ({
+                content: data.choices?.[0]?.delta?.content ?? ""
+            })
+        }
+    ]
+});
+
+const readableStream = await stream.fetchIA({
+    body: JSON.stringify({
+        model: "llama-3.3-70b-versatile",
+        messages: [{ role: "user", content: "What is the capital of Brazil?" }],
+        stream: true
+    })
+}) as ReadableStream<{ content: string }>;
+```
+
+#### 6. Multiple extractors for metrics
+
+```typescript
+const stream = new StreamHttpEvent();
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { "Authorization": "Bearer sk-..." },
+    extractor: [
+        {
+            key: "content",
+            fn: (data) => ({
+                content: data.choices?.[0]?.delta?.content ?? ""
+            })
+        },
+        {
+            key: "finish_reason",
+            fn: (data) => ({
+                finish_reason: data.choices?.[0]?.finish_reason ?? ""
+            })
+        },
+        {
+            key: "usage",
+            fn: (data) => {
+                if (data.usage) {
+                    return { usage: data.usage };
+                }
+                return {};
+            }
+        }
+    ]
+});
+
+// Each enqueued chunk will have { content, finish_reason?, usage? }
+```
+
+#### 7. Piping stream to file (encodeBytes: true)
+
+```typescript
+const stream = new StreamHttpEvent();
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { "Authorization": "Bearer sk-..." }
+});
+
+const readableStream = await stream.fetchIA({
+    body: JSON.stringify({
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Generate a large JSON" }],
+        stream: true
+    }),
+    encodeBytes: true   // Output as Uint8Array
+}) as ReadableStream<Uint8Array>;
+
+// Node.js: write to file
+import { createWriteStream } from "node:fs";
+
+const writeStream = createWriteStream("output.jsonl");
+const reader = readableStream.getReader();
+while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    writeStream.write(value);
+}
+writeStream.end();
+```
+
+#### 8. HTTP server proxying the stream (Bun/Deno/Node)
+
+```typescript
+// Using Bun
+const stream = new StreamHttpEvent();
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { "Authorization": `Bearer ${process.env.OPENAI_API_KEY}` }
+});
+
+Bun.serve({
+    port: 3000,
+    async fetch(req) {
+        const body = await req.json();
+
+        const aiStream = await stream.fetchIA({
+            body: JSON.stringify({ ...body, stream: true }),
+            encodeBytes: true
+        }) as ReadableStream<Uint8Array>;
+
+        return new Response(aiStream, {
+            headers: { "Content-Type": "text/event-stream" }
+        });
+    }
+});
+```
+
+#### 9. Batch processing with multiple providers
+
+```typescript
+const openaiStream = new StreamHttpEvent();
+openaiStream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: { "Authorization": "Bearer sk-openai-..." },
+    timeOut: 30000
+});
+
+const groqStream = new StreamHttpEvent();
+groqStream.dataFetch({
+    url: "https://api.groq.com/openai/v1/chat/completions",
+    headers: { "Authorization": "Bearer gsk-groq-..." },
+    timeOut: 15000
+});
+
+// Fire both in parallel
+const [openaiResult, groqResult] = await Promise.all([
+    openaiStream.fetchIA({
+        body: JSON.stringify({
+            model: "gpt-4o",
+            messages: [{ role: "user", content: "Summarize: what is AI?" }],
+            stream: true
+        })
+    }),
+    groqStream.fetchIA({
+        body: JSON.stringify({
+            model: "llama-3.3-70b-versatile",
+            messages: [{ role: "user", content: "Summarize: what is AI?" }],
+            stream: true
+        })
+    })
+]);
+```
+
+---
+
+### TypeScript Types
+
+```typescript
+// src/type.ts
+
+interface extractorType {
+    key: string;
+    fn: (data: Record<string, any>) => Record<string, any>;
+}
+
+interface dataFetchType {
+    url: string;
+    headers?: Record<string, string>;
+    timeOut?: number;
+    extractor?: extractorType[];
+}
+
+interface FetchOptions<O extends object = object> {
+    signal?: AbortSignal;
+    encodeBytes?: boolean;
+    method?: string;
+    body?: string;
+    extractor?: extractorType[];
+}
+
+// Internal types exposed for reference:
+interface bufferControlType {
+    getBuffer: () => string;
+    setBuffer: (data: string) => void;
+    add: (data: string) => void;
+}
+
+interface timeOutControlType {
+    getTime: () => ReturnType<typeof setTimeout> | undefined;
+    setTime: ({ id }: { id: ReturnType<typeof setTimeout> }) => void;
+    clearTime: () => void;
+}
+
+interface stateLocalType {
+    getState: () => unknown | undefined;
+    getStateOne: (key: string) => unknown | undefined;
+    setState: (newState: Record<string, unknown>) => void;
+    clearState: () => void;
+    clearStateByKey: (key: string) => void;
+    hasStateByKey: (key: string) => boolean;
+}
+
+interface serializeType {
+    buffer: bufferControlType;
+    controller: ReadableStreamDefaultController<any>;
+    encoder: TextEncoder;
+    extractor?: extractorType[];
+    encodeBytes: undefined | boolean;
+    state: stateLocalType;
+}
+
+interface timeoutType {
+    controller: ReadableStreamDefaultController<any>;
+    timeOutId: timeOutControlType;
+    bodyReader: ReadableStreamDefaultReader<Uint8Array<ArrayBufferLike>>;
+}
+
+interface streamIaType {
+    body: ReadableStream<Uint8Array>;
+    encodeBytes: boolean | undefined;
+    extractor?: extractorType[];
+}
+```
+
+---
+
+### Estrutura do Projeto / Project Structure
+
+```
+.
+├── src/
+│   ├── streamHttpEvent.ts    # Classe principal (257 linhas)
+│   └── type.ts               # Definições de tipos (61 linhas)
+├── dist/                     # Saída compilada (ES2022 ESM)
+├── package.json              # v1.3.6, zero dependências de runtime
+├── tsconfig.json             # target: ES2022, module: ES2022, strict: true
+└── README.md
+```
+
+### Licença / License
+
+ISC

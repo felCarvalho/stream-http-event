@@ -251,7 +251,7 @@ export class StreamHttpEvent {
                 extractor: extractor ?? this.extractor,
             }) as ReadableStream<O>;
         } else {
-            return await fetcher.json();
+            return (await fetcher.json()) as Promise<O>;
         }
     }
 }
