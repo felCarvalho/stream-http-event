@@ -4,17 +4,20 @@ import type {
     timeoutType,
     streamIaType,
     FetchOptions,
+    extractorType,
 } from "./type.js";
 
 export class StreamHttpEvent {
     private url?: string;
     private headers?: Record<string, string> = {};
     private timeOut?: number;
+    private extractor?: extractorType[];
 
-    public dataFetch({ url, headers, timeOut }: dataFetchType) {
+    public dataFetch({ url, headers, timeOut, extractor }: dataFetchType) {
         this.url = url;
         this.headers = headers ?? {};
         this.timeOut = timeOut;
+        this.extractor = extractor;
     }
 
     private bufferControl() {
@@ -217,7 +220,7 @@ export class StreamHttpEvent {
             return this.streamIA({
                 body: fetcher.body,
                 encodeBytes,
-                extractor,
+                extractor: extractor ?? this.extractor,
             }) as ReadableStream<O>;
         } else {
             return await fetcher.json();

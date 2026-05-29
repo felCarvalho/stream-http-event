@@ -18,6 +18,7 @@ export interface dataFetchType {
     url: string;
     headers?: Record<string, string>;
     timeOut?: number;
+    extractor?: extractorType[];
 }
 
 export interface serializeType {

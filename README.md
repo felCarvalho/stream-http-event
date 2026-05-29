@@ -40,9 +40,15 @@ streamer.dataFetch({
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
     },
     timeOut: 30000, // 30s de timeout, reseta a cada chunk recebido
+    extractor: [
+        (data) => ({
+            content: data.choices?.[0]?.delta?.content ?? "",
+        }),
+    ],
 });
 
 // 2. Executar — opções por requisição (body, method, extractor)
+// extractor em fetchIA sobrescreve o definido em dataFetch
 // Com encodeBytes: true — cada chunk é codificado como Uint8Array
 const stream = await streamer.fetchIA({
     encodeBytes: true,
@@ -52,11 +58,6 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Olá!" }],
         stream: true,
     }),
-    extractor: [
-        (data) => ({
-            content: data.choices?.[0]?.delta?.content ?? "",
-        }),
-    ],
 });
 
 // 3. Ler do stream
@@ -95,6 +96,7 @@ Configura os parâmetros estáticos da requisição. **Deve ser chamado antes de
 | `url` | `string` | Sim | A URL do endpoint |
 | `headers` | `Record<string, string>` | Não | Cabeçalhos HTTP (ex.: `Authorization`, `Content-Type`) |
 | `timeOut` | `number` | Não | Milissegundos máximos sem chunk antes de abortar. Reseta a cada chunk recebido. Se `0` ou omitido, sem timeout. |
+| `extractor` | `Array<(data: Record<string, any>) => Record<string, any>>` | Não | Array de funções de extração aplicadas sobre cada chunk JSON da IA. Cada função retorna um objeto mergeado na resposta. Configuração estática — reutilizada em todas as chamadas `fetchIA()`. Pode ser sobrescrita por requisição passando `extractor` em `fetchIA()`. |
 
 ---
 
@@ -110,7 +112,7 @@ Lança erro se `dataFetch()` não tiver sido chamado antes.
 | `signal` | `AbortSignal` | Não | Repassado ao `fetch()` interno. Abortar o sinal cancela a requisição HTTP e o leitor do stream. |
 | `method` | `string` | Não | Método HTTP da requisição. Padrão `"POST"`. |
 | `body` | `any` | Não | Corpo da requisição. Normalmente `JSON.stringify(...)`. Padrão `"{}"`. |
-| `extractor` | `Array<(data: Record<string, any>) => Record<string, any>>` | Não | Array de funções aplicadas sobre cada chunk JSON já parseado. Cada função recebe o objeto parseado e retorna um objeto com dados a serem mergeados na resposta via `Object.assign`. Múltiplos extratores acumulam — todos os resultados são mergeados no objeto final. Se omitido, o JSON parseado é enfileirado como está. |
+| `extractor` | `Array<(data: Record<string, any>) => Record<string, any>>` | Não | Array de funções aplicadas sobre cada chunk JSON já parseado. **Sobrescreve** o extrator definido em `dataFetch()` para esta requisição. Se omitido em ambos (`dataFetch` e `fetchIA`), o JSON parseado é enfileirado como está. |
 
 > **Tipagem:** `fetchIA<O>()` recebe o tipo de saída esperado como genérico. Os extractors enriquecem o JSON da IA com dados adicionais mergeados via `Object.assign`. O autocomplete flui do genérico `O` para o `ReadableStream<O>` ou `Promise<O>` retornado.
 
@@ -131,6 +133,9 @@ streamer.dataFetch({
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
     },
     timeOut: 30000,
+    extractor: [
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+    ],
 });
 
 const stream = await streamer.fetchIA({
@@ -141,9 +146,6 @@ const stream = await streamer.fetchIA({
         stream: true,
         temperature: 0.7,
     }),
-    extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
-    ],
 });
 ```
 
@@ -159,6 +161,13 @@ streamer.dataFetch({
         "x-api-key": process.env.ANTHROPIC_API_KEY!,
         "anthropic-version": "2023-06-01",
     },
+    extractor: [
+        (data) => ({
+            content: data.type === "content_block_delta"
+                ? data.delta?.text ?? ""
+                : "",
+        }),
+    ],
 });
 
 const stream = await streamer.fetchIA({
@@ -169,13 +178,6 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Explique computação quântica." }],
         stream: true,
     }),
-    extractor: [
-        (data) => ({
-            content: data.type === "content_block_delta"
-                ? data.delta?.text ?? ""
-                : "",
-        }),
-    ],
 });
 ```
 
@@ -187,6 +189,11 @@ O Gemini usa query parameter para a API key e formato diferente de request/respo
 streamer.dataFetch({
     url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:streamGenerateContent?key=${process.env.GEMINI_API_KEY}`,
     headers: { "Content-Type": "application/json" },
+    extractor: [
+        (data) => ({
+            content: data.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
+        }),
+    ],
 });
 
 const stream = await streamer.fetchIA({
@@ -194,11 +201,6 @@ const stream = await streamer.fetchIA({
     body: JSON.stringify({
         contents: [{ parts: [{ text: "Explique computação quântica." }] }],
     }),
-    extractor: [
-        (data) => ({
-            content: data.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
-        }),
-    ],
 });
 ```
 
@@ -211,6 +213,9 @@ streamer.dataFetch({
         "Content-Type": "application/json",
         Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
     },
+    extractor: [
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+    ],
 });
 
 const stream = await streamer.fetchIA({
@@ -220,9 +225,6 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Explique computação quântica." }],
         stream: true,
     }),
-    extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
-    ],
 });
 ```
 
@@ -235,6 +237,9 @@ streamer.dataFetch({
         "Content-Type": "application/json",
         Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
     },
+    extractor: [
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+    ],
 });
 
 const stream = await streamer.fetchIA({
@@ -244,9 +249,6 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Explique computação quântica." }],
         stream: true,
     }),
-    extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
-    ],
 });
 ```
 
@@ -677,9 +679,15 @@ streamer.dataFetch({
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
     },
     timeOut: 30000, // 30s timeout, resets on each chunk received
+    extractor: [
+        (data) => ({
+            content: data.choices?.[0]?.delta?.content ?? "",
+        }),
+    ],
 });
 
 // 2. Execute — pass per-request options (body, method, extractor)
+// extractor in fetchIA overrides the one set in dataFetch
 // With encodeBytes: true — each chunk is encoded as Uint8Array
 const stream = await streamer.fetchIA({
     encodeBytes: true,
@@ -689,11 +697,6 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Hello!" }],
         stream: true,
     }),
-    extractor: [
-        (data) => ({
-            content: data.choices?.[0]?.delta?.content ?? "",
-        }),
-    ],
 });
 
 // 3. Read from the stream
@@ -732,6 +735,7 @@ Configures the static request parameters. **Must be called before `fetchIA()`.**
 | `url` | `string` | Yes | The endpoint URL |
 | `headers` | `Record<string, string>` | No | HTTP headers (e.g., `Authorization`, `Content-Type`) |
 | `timeOut` | `number` | No | Max milliseconds without a chunk before aborting. Resets on each received chunk. If `0` or omitted, no timeout is enforced. |
+| `extractor` | `Array<(data: Record<string, any>) => Record<string, any>>` | No | Array of extractor functions applied to each AI JSON chunk. Each function returns an object merged into the response. Static config — reused across all `fetchIA()` calls. Can be overridden per request by passing `extractor` in `fetchIA()`. |
 
 ---
 
@@ -747,7 +751,7 @@ Throws an error if `dataFetch()` was not called beforehand.
 | `signal` | `AbortSignal` | No | Passed to the underlying `fetch()` call. Aborting the signal cancels the HTTP request and the stream reader. |
 | `method` | `string` | No | HTTP method for the request. Defaults to `"POST"`. |
 | `body` | `any` | No | Request body. Typically `JSON.stringify(...)`. Defaults to `"{}"`. |
-| `extractor` | `Array<(data: Record<string, any>) => Record<string, any>>` | No | Array of functions applied to each already-parsed JSON chunk. Each function receives the parsed object and returns an object with data to be merged into the response via `Object.assign`. Multiple extractors accumulate — all results are merged into the final object. If omitted, the parsed JSON is enqueued as-is. |
+| `extractor` | `Array<(data: Record<string, any>) => Record<string, any>>` | No | Array of functions applied to each already-parsed JSON chunk. **Overrides** the extractor set in `dataFetch()` for this request. If omitted in both (`dataFetch` and `fetchIA`), the parsed JSON is enqueued as-is. |
 
 > **Typing:** `fetchIA<O>()` accepts the expected output type as a generic. Extractors enrich the AI JSON with additional data merged via `Object.assign`. Autocomplete flows from the `O` generic into the returned `ReadableStream<O>` or `Promise<O>`.
 
@@ -768,6 +772,9 @@ streamer.dataFetch({
         Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
     },
     timeOut: 30000,
+    extractor: [
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+    ],
 });
 
 const stream = await streamer.fetchIA({
@@ -778,9 +785,6 @@ const stream = await streamer.fetchIA({
         stream: true,
         temperature: 0.7,
     }),
-    extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
-    ],
 });
 ```
 
@@ -796,6 +800,13 @@ streamer.dataFetch({
         "x-api-key": process.env.ANTHROPIC_API_KEY!,
         "anthropic-version": "2023-06-01",
     },
+    extractor: [
+        (data) => ({
+            content: data.type === "content_block_delta"
+                ? data.delta?.text ?? ""
+                : "",
+        }),
+    ],
 });
 
 const stream = await streamer.fetchIA({
@@ -806,13 +817,6 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Explain quantum computing." }],
         stream: true,
     }),
-    extractor: [
-        (data) => ({
-            content: data.type === "content_block_delta"
-                ? data.delta?.text ?? ""
-                : "",
-        }),
-    ],
 });
 ```
 
@@ -824,6 +828,11 @@ Gemini uses a query parameter for the API key and a different request/response s
 streamer.dataFetch({
     url: `https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:streamGenerateContent?key=${process.env.GEMINI_API_KEY}`,
     headers: { "Content-Type": "application/json" },
+    extractor: [
+        (data) => ({
+            content: data.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
+        }),
+    ],
 });
 
 const stream = await streamer.fetchIA({
@@ -831,11 +840,6 @@ const stream = await streamer.fetchIA({
     body: JSON.stringify({
         contents: [{ parts: [{ text: "Explain quantum computing." }] }],
     }),
-    extractor: [
-        (data) => ({
-            content: data.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
-        }),
-    ],
 });
 ```
 
@@ -848,6 +852,9 @@ streamer.dataFetch({
         "Content-Type": "application/json",
         Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
     },
+    extractor: [
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+    ],
 });
 
 const stream = await streamer.fetchIA({
@@ -857,9 +864,6 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Explain quantum computing." }],
         stream: true,
     }),
-    extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
-    ],
 });
 ```
 
@@ -872,6 +876,9 @@ streamer.dataFetch({
         "Content-Type": "application/json",
         Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
     },
+    extractor: [
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
+    ],
 });
 
 const stream = await streamer.fetchIA({
@@ -881,9 +888,6 @@ const stream = await streamer.fetchIA({
         messages: [{ role: "user", content: "Explain quantum computing." }],
         stream: true,
     }),
-    extractor: [
-        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
-    ],
 });
 ```
 
