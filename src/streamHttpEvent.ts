@@ -81,33 +81,37 @@ export class StreamHttpEvent {
 
             if (!trimmedLine) continue;
 
-            if (line.includes("[DONE]")) {
+            if (trimmedLine === "data: [DONE]" || trimmedLine === "[DONE]") {
                 controller.close();
                 return true;
             }
 
             if (trimmedLine.startsWith("data:")) {
-                const cleanData = trimmedLine.replace("data:", "").trim();
+                const cleanData = trimmedLine.slice("data:".length).trim();
 
                 try {
                     if (cleanData) {
                         const parsedData = JSON.parse(cleanData);
-                        let extracted: typeof parsedData = parsedData;
-                        if (extractor && extractor.length) {
-                            extracted = extractor.reduce(
-                                (acc, fn) => fn(acc),
-                                extracted,
-                            );
+                        let extractedData = {};
+
+                        if (extractor) {
+                            for (const fn of extractor) {
+                                extractedData = fn(parsedData);
+
+                                if (extractedData) {
+                                    Object.assign(parsedData, extractedData);
+                                }
+                            }
                         }
 
                         if (encodeBytes) {
                             controller.enqueue(
                                 encoder.encode(
-                                    JSON.stringify(extracted) + "\n",
+                                    JSON.stringify(parsedData) + "\n",
                                 ),
                             );
                         } else {
-                            controller.enqueue(JSON.stringify(extracted));
+                            controller.enqueue(JSON.stringify(parsedData));
                         }
                     }
                 } catch (error) {
@@ -141,7 +145,11 @@ export class StreamHttpEvent {
 
                         if (done) {
                             timeOutId.clearTime();
-                            controller.close();
+                            try {
+                                controller.close();
+                            } catch {
+                                // controller already errored, ignore
+                            }
                             break;
                         }
 
@@ -167,7 +175,9 @@ export class StreamHttpEvent {
                     }
                 } catch (error) {
                     timeOutId.clearTime();
-                    controller.error(error);
+                    try {
+                        controller.error(error);
+                    } catch {}
                 } finally {
                     bodyReader.releaseLock();
                 }
@@ -181,7 +191,7 @@ export class StreamHttpEvent {
         method,
         body,
         extractor,
-    }: FetchOptions<O>) {
+    }: FetchOptions) {
         if (!this.url) {
             throw new Error("dataFetch() precisa da url do seu provedor de IA");
         }
@@ -194,7 +204,7 @@ export class StreamHttpEvent {
         });
 
         if (!fetcher.ok) {
-            throw new Error(fetcher.statusText);
+            throw new Error(`${fetcher.status} - ${fetcher.statusText}`);
         }
 
         if (!fetcher.body) {
@@ -204,13 +214,13 @@ export class StreamHttpEvent {
         const contentType = fetcher.headers.get("content-type") ?? "";
 
         if (contentType?.includes("text/event-stream")) {
-            return this.streamIA<O>({
+            return this.streamIA({
                 body: fetcher.body,
                 encodeBytes,
                 extractor,
             }) as ReadableStream<O>;
         } else {
-            return fetcher.json() as Promise<O>;
+            return await fetcher.json();
         }
     }
 }

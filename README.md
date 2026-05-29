@@ -13,7 +13,7 @@ Uma biblioteca TypeScript leve para consumir **Server-Sent Events (SSE)** sobre 
 - Método HTTP configurável (padrão `POST`), headers e body
 - Faz parse de respostas `text/event-stream` (SSE) em tempo real via `ReadableStream`
 - Lida com chunks parciais/incompletos com um buffer interno
-- **Extractor** em array definido pelo usuário — funções aplicadas via `reduce` para transformar linhas `data:` em objetos estruturados (opcional, fallback para dado bruto)
+- **Extractor** em array definido pelo usuário — funções que recebem o JSON já parseado da IA e retornam dados adicionais a serem mergeados na resposta (opcional, fallback para dado bruto)
 - Detecta `[DONE]` como sinal de término do stream
 - `timeOut` opcional para abortar conexões travadas (reseta a cada chunk recebido)
 - Opcionalmente codifica a saída em `Uint8Array`
@@ -53,10 +53,9 @@ const stream = await streamer.fetchIA({
         stream: true,
     }),
     extractor: [
-        (rawData: string) => {
-            const parsed = JSON.parse(rawData);
-            return parsed.choices?.[0]?.delta?.content ?? "";
-        },
+        (data) => ({
+            content: data.choices?.[0]?.delta?.content ?? "",
+        }),
     ],
 });
 
@@ -111,9 +110,9 @@ Lança erro se `dataFetch()` não tiver sido chamado antes.
 | `signal` | `AbortSignal` | Não | Repassado ao `fetch()` interno. Abortar o sinal cancela a requisição HTTP e o leitor do stream. |
 | `method` | `string` | Não | Método HTTP da requisição. Padrão `"POST"`. |
 | `body` | `any` | Não | Corpo da requisição. Normalmente `JSON.stringify(...)`. Padrão `"{}"`. |
-| `extractor` | `Array<(data: any) => any>` | Não | Array de funções aplicadas via `reduce` sobre cada linha `data:`. A saída de uma função é a entrada da próxima. Se omitido, o conteúdo bruto do `data:` é enfileirado como está. |
+| `extractor` | `Array<(data: Record<string, any>) => Record<string, any>>` | Não | Array de funções aplicadas sobre cada chunk JSON já parseado. Cada função recebe o objeto parseado e retorna um objeto com dados a serem mergeados na resposta via `Object.assign`. Múltiplos extratores acumulam — todos os resultados são mergeados no objeto final. Se omitido, o JSON parseado é enfileirado como está. |
 
-> **Tipagem:** `fetchIA<O>()` recebe o tipo de saída esperado como genérico. Os extractors transformam o JSON cru em `O`. O autocomplete flui do genérico `O` para o `ReadableStream<O>` ou `Promise<O>` retornado.
+> **Tipagem:** `fetchIA<O>()` recebe o tipo de saída esperado como genérico. Os extractors enriquecem o JSON da IA com dados adicionais mergeados via `Object.assign`. O autocomplete flui do genérico `O` para o `ReadableStream<O>` ou `Promise<O>` retornado.
 
 ---
 
@@ -143,7 +142,7 @@ const stream = await streamer.fetchIA({
         temperature: 0.7,
     }),
     extractor: [
-        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
     ],
 });
 ```
@@ -171,13 +170,11 @@ const stream = await streamer.fetchIA({
         stream: true,
     }),
     extractor: [
-        (data) => {
-            const parsed = JSON.parse(data);
-            if (parsed.type === "content_block_delta") {
-                return parsed.delta?.text ?? "";
-            }
-            return "";
-        },
+        (data) => ({
+            content: data.type === "content_block_delta"
+                ? data.delta?.text ?? ""
+                : "",
+        }),
     ],
 });
 ```
@@ -198,10 +195,9 @@ const stream = await streamer.fetchIA({
         contents: [{ parts: [{ text: "Explique computação quântica." }] }],
     }),
     extractor: [
-        (data) => {
-            const parsed = JSON.parse(data);
-            return parsed.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-        },
+        (data) => ({
+            content: data.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
+        }),
     ],
 });
 ```
@@ -225,7 +221,7 @@ const stream = await streamer.fetchIA({
         stream: true,
     }),
     extractor: [
-        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
     ],
 });
 ```
@@ -249,7 +245,7 @@ const stream = await streamer.fetchIA({
         stream: true,
     }),
     extractor: [
-        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
     ],
 });
 ```
@@ -265,7 +261,7 @@ const stream = await streamer.fetchIA({
     signal: controller.signal,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
     extractor: [
-        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
     ],
 });
 // stream.getReader().read() rejeitará com AbortError após 10s
@@ -291,7 +287,7 @@ app.get("/chat", async (req, res) => {
         encodeBytes: true,
         body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
         extractor: [
-            (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+            (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
         ],
     });
 
@@ -415,7 +411,7 @@ const stream = await streamer.fetchIA({
         stream: true,
     }),
     extractor: [
-        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
     ],
 });
 
@@ -433,24 +429,28 @@ while (true) {
 
 ---
 
-**Extractors reutilizáveis** — defina as funções de extração uma vez e passe-as como array em múltiplas chamadas `fetchIA()`. Provedores compatíveis com OpenAI (Groq, DeepSeek) podem compartilhar o mesmo extractor. Também é possível encadear múltiplas funções — a saída de uma vira entrada da próxima via `reduce`.
+**Extractors reutilizáveis** — defina as funções de extração uma vez e passe-as como array em múltiplas chamadas `fetchIA()`. Provedores compatíveis com OpenAI (Groq, DeepSeek) podem compartilhar o mesmo extractor. Cada extrator recebe o JSON já parseado e retorna um objeto com dados a serem mergeados na resposta via `Object.assign`. Múltiplos extratores acumulam — todos os resultados são combinados no objeto final.
 
 ```typescript
-const openAIExtractor = (data: any) =>
-    JSON.parse(data).choices?.[0]?.delta?.content ?? "";
+const openAIExtractor = (data: any) => ({
+    content: data.choices?.[0]?.delta?.content ?? "",
+});
 
-const sanitizeExtractor = (text: string) => text.trim();
+const wordCountExtractor = (data: any) => ({
+    wordCount: (data.choices?.[0]?.delta?.content ?? "")
+        .trim().split(/\s+/).filter(Boolean).length,
+});
 
-// Uso em array — aplicado em ordem
+// Múltiplos extratores — todos os resultados são mergeados
 const stream = await streamer.fetchIA({
     encodeBytes: true,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-    extractor: [openAIExtractor, sanitizeExtractor],
+    extractor: [openAIExtractor, wordCountExtractor],
 });
 
 // Extrai tool calls de respostas function-calling
 const toolCallExtractor = (data: any) => {
-    const delta = JSON.parse(data).choices?.[0]?.delta;
+    const delta = data.choices?.[0]?.delta;
     if (delta?.tool_calls?.[0]?.function?.arguments) {
         return { type: "tool_args", data: delta.tool_calls[0].function.arguments };
     }
@@ -468,7 +468,7 @@ const stream = await streamer.fetchIA<TokenChunk>({
     encodeBytes: true,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
     extractor: [
-        (data) => JSON.parse(data).choices?.[0]?.delta ?? { content: "" },
+        (data) => data.choices?.[0]?.delta ?? { content: "" },
     ],
 });
 
@@ -618,7 +618,7 @@ para cada linha completa:
   linha vazia?      → pula
   contém [DONE]?    → fecha stream, retorna
   começa com data:? → remove prefixo, faz JSON.parse
-                       extractor? → reduce(extractor, parsedData) encadeia funções
+                       extractor? → Object.assign(parsedData, extracted) mergeia resultados
                        encodeBytes?
                          true  → enqueue Uint8Array com \n no final
                          false → enqueue string pura
@@ -650,7 +650,7 @@ A lightweight TypeScript library for consuming **Server-Sent Events (SSE)** over
 - Configurable HTTP method (defaults to `POST`), headers and body
 - Parses `text/event-stream` (SSE) responses in real-time via `ReadableStream`
 - Handles partial/incomplete chunks across network boundaries with an internal buffer
-- User-defined **extractor** array — functions applied via `reduce` to transform raw `data:` lines into structured objects (optional, falls back to raw data)
+- User-defined **extractor** array — functions that receive the AI's already-parsed JSON and return additional data to be merged into the response (optional, falls back to raw data)
 - Detects `[DONE]` as the stream termination signal
 - Optional `timeOut` to abort hanging connections (resets on each received chunk)
 - Optionally encodes output as `Uint8Array` bytes (ideal for piping into further streams)
@@ -690,10 +690,9 @@ const stream = await streamer.fetchIA({
         stream: true,
     }),
     extractor: [
-        (rawData: string) => {
-            const parsed = JSON.parse(rawData);
-            return parsed.choices?.[0]?.delta?.content ?? "";
-        },
+        (data) => ({
+            content: data.choices?.[0]?.delta?.content ?? "",
+        }),
     ],
 });
 
@@ -748,9 +747,9 @@ Throws an error if `dataFetch()` was not called beforehand.
 | `signal` | `AbortSignal` | No | Passed to the underlying `fetch()` call. Aborting the signal cancels the HTTP request and the stream reader. |
 | `method` | `string` | No | HTTP method for the request. Defaults to `"POST"`. |
 | `body` | `any` | No | Request body. Typically `JSON.stringify(...)`. Defaults to `"{}"`. |
-| `extractor` | `Array<(data: any) => any>` | No | Array of functions applied via `reduce` over each `data:` line. Output of one function becomes input of the next. If omitted, the raw `data:` content is enqueued as-is. |
+| `extractor` | `Array<(data: Record<string, any>) => Record<string, any>>` | No | Array of functions applied to each already-parsed JSON chunk. Each function receives the parsed object and returns an object with data to be merged into the response via `Object.assign`. Multiple extractors accumulate — all results are merged into the final object. If omitted, the parsed JSON is enqueued as-is. |
 
-> **Typing:** `fetchIA<O>()` accepts the expected output type as a generic. Extractors transform raw JSON into `O`. Autocomplete flows from the `O` generic into the returned `ReadableStream<O>` or `Promise<O>`.
+> **Typing:** `fetchIA<O>()` accepts the expected output type as a generic. Extractors enrich the AI JSON with additional data merged via `Object.assign`. Autocomplete flows from the `O` generic into the returned `ReadableStream<O>` or `Promise<O>`.
 
 ---
 
@@ -780,7 +779,7 @@ const stream = await streamer.fetchIA({
         temperature: 0.7,
     }),
     extractor: [
-        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
     ],
 });
 ```
@@ -808,13 +807,11 @@ const stream = await streamer.fetchIA({
         stream: true,
     }),
     extractor: [
-        (data) => {
-            const parsed = JSON.parse(data);
-            if (parsed.type === "content_block_delta") {
-                return parsed.delta?.text ?? "";
-            }
-            return "";
-        },
+        (data) => ({
+            content: data.type === "content_block_delta"
+                ? data.delta?.text ?? ""
+                : "",
+        }),
     ],
 });
 ```
@@ -835,10 +832,9 @@ const stream = await streamer.fetchIA({
         contents: [{ parts: [{ text: "Explain quantum computing." }] }],
     }),
     extractor: [
-        (data) => {
-            const parsed = JSON.parse(data);
-            return parsed.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-        },
+        (data) => ({
+            content: data.candidates?.[0]?.content?.parts?.[0]?.text ?? "",
+        }),
     ],
 });
 ```
@@ -862,7 +858,7 @@ const stream = await streamer.fetchIA({
         stream: true,
     }),
     extractor: [
-        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
     ],
 });
 ```
@@ -886,7 +882,7 @@ const stream = await streamer.fetchIA({
         stream: true,
     }),
     extractor: [
-        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
     ],
 });
 ```
@@ -902,7 +898,7 @@ const stream = await streamer.fetchIA({
     signal: controller.signal,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
     extractor: [
-        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
     ],
 });
 // stream.getReader().read() will reject with AbortError after 10s
@@ -928,7 +924,7 @@ app.get("/chat", async (req, res) => {
         encodeBytes: true,
         body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
         extractor: [
-            (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+            (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
         ],
     });
 
@@ -1052,7 +1048,7 @@ const stream = await streamer.fetchIA({
         stream: true,
     }),
     extractor: [
-        (data) => JSON.parse(data).choices?.[0]?.delta?.content ?? "",
+        (data) => ({ content: data.choices?.[0]?.delta?.content ?? "" }),
     ],
 });
 
@@ -1070,24 +1066,28 @@ while (true) {
 
 ---
 
-**Reusable extractors** — define extraction functions once and pass them as an array across multiple `fetchIA()` calls. Providers like Groq and DeepSeek (OpenAI-compatible) can share the same extractor. You can also chain multiple functions — the output of one becomes the input of the next via `reduce`.
+**Reusable extractors** — define extraction functions once and pass them as an array across multiple `fetchIA()` calls. Providers like Groq and DeepSeek (OpenAI-compatible) can share the same extractor. Each extractor receives the already-parsed JSON and returns an object with data to be merged into the response via `Object.assign`. Multiple extractors accumulate — all results are combined into the final object.
 
 ```typescript
-const openAIExtractor = (data: any) =>
-    JSON.parse(data).choices?.[0]?.delta?.content ?? "";
+const openAIExtractor = (data: any) => ({
+    content: data.choices?.[0]?.delta?.content ?? "",
+});
 
-const sanitizeExtractor = (text: string) => text.trim();
+const wordCountExtractor = (data: any) => ({
+    wordCount: (data.choices?.[0]?.delta?.content ?? "")
+        .trim().split(/\s+/).filter(Boolean).length,
+});
 
-// Usage as array — applied in order
+// Multiple extractors — all results are merged
 const stream = await streamer.fetchIA({
     encodeBytes: true,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
-    extractor: [openAIExtractor, sanitizeExtractor],
+    extractor: [openAIExtractor, wordCountExtractor],
 });
 
 // Extract tool calls from function-calling responses
 const toolCallExtractor = (data: any) => {
-    const delta = JSON.parse(data).choices?.[0]?.delta;
+    const delta = data.choices?.[0]?.delta;
     if (delta?.tool_calls?.[0]?.function?.arguments) {
         return { type: "tool_args", data: delta.tool_calls[0].function.arguments };
     }
@@ -1105,7 +1105,7 @@ const stream = await streamer.fetchIA<TokenChunk>({
     encodeBytes: true,
     body: JSON.stringify({ model: "gpt-4", messages: [...], stream: true }),
     extractor: [
-        (data) => JSON.parse(data).choices?.[0]?.delta ?? { content: "" },
+        (data) => data.choices?.[0]?.delta ?? { content: "" },
     ],
 });
 
@@ -1255,7 +1255,7 @@ for each complete line:
   empty line?        → skip
   contains [DONE]?   → close stream, return
   starts with data:? → strip prefix, JSON.parse
-                        extractor? → reduce(extractor, parsedData) chains functions
+                        extractor? → Object.assign(parsedData, extracted) merges results
                         encodeBytes?
                           true  → enqueue Uint8Array with trailing \n
                           false → enqueue plain string

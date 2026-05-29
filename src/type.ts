@@ -11,7 +11,7 @@ export interface timeOutControlType {
 }
 
 export interface extractorType {
-    (data: string): any;
+    (data: Record<string, any>): Record<string, any>;
 }
 
 export interface dataFetchType {
