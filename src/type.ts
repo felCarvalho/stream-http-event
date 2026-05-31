@@ -11,7 +11,7 @@ export interface timeOutControlType {
 }
 
 export interface stateLocalType {
-    getState: () => unknown | undefined;
+    getState: () => unknown | Record<string, unknown>;
     getStateOne: (key: string) => unknown | undefined;
     setState: (newState: Record<string, unknown>) => void;
     clearState: () => void;
@@ -52,7 +52,7 @@ export interface streamIaType {
     extractor?: extractorType[];
 }
 
-export interface FetchOptions<O extends object = object> {
+export interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;

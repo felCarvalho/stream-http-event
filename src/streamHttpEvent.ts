@@ -69,20 +69,28 @@ export class StreamHttpEvent {
         };
     }
 
-    private timeout({ controller, timeOutId, bodyReader }: timeoutType) {
+    private async timeout({ controller, timeOutId, bodyReader }: timeoutType) {
         if (timeOutId.getTime()) {
             timeOutId.clearTime();
         }
 
         if (this.timeOut) {
             timeOutId.setTime({
-                id: setTimeout(() => {
-                    controller.error(
-                        new Error(
-                            `Ops, Sua provedor de IA demorou mais de ${this.timeOut}ms`,
-                        ),
-                    );
-                    bodyReader.cancel();
+                id: setTimeout(async () => {
+                    try {
+                        await bodyReader.cancel();
+                    } catch (error) {
+                        console.error(error);
+                    }
+                    try {
+                        controller.error(
+                            new Error(
+                                `Ops, Seu provedor de IA demorou mais de ${this.timeOut}ms`,
+                            ),
+                        );
+                    } catch (error) {
+                        console.error(error);
+                    }
                 }, this.timeOut),
             });
         }
@@ -104,60 +112,58 @@ export class StreamHttpEvent {
 
             if (!trimmedLine) continue;
 
-            if (trimmedLine === "data: [DONE]" || trimmedLine === "[DONE]") {
-                controller.close();
+            if (trimmedLine === "data: [DONE]") {
+                try {
+                    controller.close();
+                } catch (error) {
+                    console.error(error);
+                }
                 return true;
             }
 
             if (trimmedLine.startsWith("data:")) {
                 const cleanData = trimmedLine.slice("data:".length).trim();
 
-                try {
-                    if (cleanData) {
-                        const parsedData = JSON.parse(cleanData);
-                        let extractedState;
+                if (cleanData) {
+                    let parsedData;
 
-                        if (extractor) {
-                            for (const fn of extractor) {
-                                state.setState(fn.fn(parsedData));
+                    try {
+                        parsedData = JSON.parse(cleanData);
+                    } catch (error) {
+                        console.error(error);
+                        state.clearState();
+                        continue;
+                    }
+                    let extractedState;
 
-                                if (state.hasStateByKey(fn.key)) {
-                                    extractedState = state.getState();
-                                }
+                    if (extractor) {
+                        for (const fn of extractor) {
+                            state.setState(fn.fn(parsedData));
+
+                            if (state.hasStateByKey(fn.key)) {
+                                extractedState = state.getState();
                             }
                         }
-
-                        if (encodeBytes) {
-                            controller.enqueue(
-                                encoder.encode(
-                                    JSON.stringify(
-                                        extractedState ?? parsedData,
-                                    ) + "\n",
-                                ),
-                            );
-                        } else {
-                            controller.enqueue(
-                                JSON.stringify(extractedState ?? parsedData),
-                            );
-                        }
-
-                        state.clearState();
                     }
-                } catch (error) {
-                    console.error("Erro ao extrair dados do body", error);
+
+                    if (encodeBytes) {
+                        const stringFy = JSON.stringify(
+                            extractedState ?? parsedData,
+                        );
+                        controller.enqueue(encoder.encode(stringFy + "\n"));
+                    } else {
+                        controller.enqueue(extractedState ?? parsedData);
+                    }
                 }
+
+                state.clearState();
             }
         }
 
         return false;
     }
 
-    private streamIA<O extends object>({
-        body,
-        encodeBytes,
-        extractor,
-    }: streamIaType) {
-        if (!body) return null;
+    private streamIA({ body, encodeBytes, extractor }: streamIaType) {
         const bodyReader = body.getReader();
         const buffer = this.bufferControl();
         const timeOutId = this.timeOutControl();
@@ -165,7 +171,7 @@ export class StreamHttpEvent {
         const decoder: TextDecoder = new TextDecoder();
         const encoder: TextEncoder = new TextEncoder();
 
-        return new ReadableStream<O>({
+        return new ReadableStream({
             start: async (controller) => {
                 this.timeout({ controller, timeOutId, bodyReader });
 
@@ -177,10 +183,16 @@ export class StreamHttpEvent {
                             timeOutId.clearTime();
                             try {
                                 controller.close();
-                            } catch {
-                                // controller already errored, ignore
+                            } catch (error) {
+                                console.error(error);
                             }
                             break;
+                        }
+
+                        if (!value) {
+                            throw new Error(
+                                "Não foi encontrado valor codificado na stream",
+                            );
                         }
 
                         buffer.add(
@@ -208,15 +220,22 @@ export class StreamHttpEvent {
                     timeOutId.clearTime();
                     try {
                         controller.error(error);
-                    } catch {}
+                    } catch {
+                        console.error(error);
+                    }
                 } finally {
-                    bodyReader.releaseLock();
+                    try {
+                        await bodyReader.cancel();
+                        bodyReader.releaseLock();
+                    } catch (error) {
+                        console.error(error);
+                    }
                 }
             },
         });
     }
 
-    public async fetchIA<O extends object>({
+    public async fetchIA({
         encodeBytes,
         signal,
         method,
@@ -239,7 +258,7 @@ export class StreamHttpEvent {
         }
 
         if (!fetcher.body) {
-            throw new Error("Ops, nenhuma corpo de resposta na sua requisição");
+            throw new Error("Ops, nenhum corpo de resposta na sua requisição");
         }
 
         const contentType = fetcher.headers.get("content-type") ?? "";
@@ -249,9 +268,9 @@ export class StreamHttpEvent {
                 body: fetcher.body,
                 encodeBytes,
                 extractor: extractor ?? this.extractor,
-            }) as ReadableStream<O>;
+            }) as ReadableStream;
         } else {
-            return (await fetcher.json()) as Promise<O>;
+            return await fetcher.json();
         }
     }
 }

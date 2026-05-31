@@ -30,7 +30,7 @@ pnpm add @felipe-lib/stream-http-event
 - **Buffer inteligente** — Lida com chunks de rede que chegam cortados no meio de linhas SSE
 - **Timeout por inatividade** — Encerra o stream automaticamente se o provedor parar de enviar dados
 - **Sistema de Extractors** — Transforma o formato bruto da resposta da IA em objetos customizados
-- **Dupla codificação** — Saída como `string` (JSON puro) ou `Uint8Array` (bytes codificados)
+- **Dupla codificação** — Saída como objeto (parseado) ou `Uint8Array` (bytes codificados)
 - **Detecção de `[DONE]`** — Reconhece o sinal de fim de stream do protocolo SSE
 - **Fallback para JSON** — Se o endpoint não retornar `text/event-stream`, faz parse como JSON comum
 - **Controle de AbortSignal** — Suporte a cancelamento via `AbortController`
@@ -52,14 +52,14 @@ type dataFetchType = {
 }
 ```
 
-#### `fetchIA<O extends object>(options: FetchOptions): Promise<ReadableStream<O> | O>`
+#### `fetchIA(options: FetchOptions): Promise<ReadableStream | object>`
 
-Executa a requisição HTTP e retorna o resultado. Se o `content-type` da resposta for `text/event-stream`, retorna uma `ReadableStream<O>`. Caso contrário, faz parse como JSON e retorna o objeto `O`.
+Executa a requisição HTTP e retorna o resultado. Se o `content-type` da resposta for `text/event-stream`, retorna uma `ReadableStream`. Caso contrário, faz parse como JSON e retorna o objeto.
 
 ```typescript
-type FetchOptions<O extends object = object> = {
+type FetchOptions = {
     signal?: AbortSignal;       // Sinal para cancelamento
-    encodeBytes?: boolean;      // true = Uint8Array, false/undefined = string
+    encodeBytes?: boolean;      // true = Uint8Array, false/undefined = objeto
     method?: string;            // Método HTTP (padrão: "POST")
     body?: string;              // Corpo da requisição (string JSON)
     extractor?: extractorType[];// Extractors específicos desta chamada (sobrescreve os padrão)
@@ -117,7 +117,7 @@ Três operações simples:
 
 #### O algoritmo de serialização
 
-No método `serialize()` (`src/streamHttpEvent.ts:91-153`):
+No método `serialize()` (`src/streamHttpEvent.ts:99-164`):
 
 ```typescript
 const lines = buffer.getBuffer().split("\n");   // Divide o buffer por quebras de linha
@@ -258,7 +258,7 @@ Seis operações:
 
 #### O algoritmo de extractor + estado
 
-No método `serialize()` (`src/streamHttpEvent.ts:120-144`), para cada linha `data:` parseada:
+No método `serialize()` (`src/streamHttpEvent.ts:128-164`), para cada linha `data:` parseada:
 
 ```typescript
 if (extractor) {
@@ -272,7 +272,11 @@ if (extractor) {
 }
 
 // 4. Decide o que enfileirar: estado extraído ou JSON bruto
-controller.enqueue(JSON.stringify(extractedState ?? parsedData));
+if (encodeBytes) {
+    controller.enqueue(encoder.encode(JSON.stringify(extractedState ?? parsedData) + "\n"));
+} else {
+    controller.enqueue(extractedState ?? parsedData);
+}
 
 state.clearState();  // 5. Limpa o estado para a próxima linha SSE
 ```
@@ -360,7 +364,7 @@ stream.dataFetch({
    - O `bodyReader` é cancelado (abortando o fetch subjacente)
 4. Se o stream terminar normalmente (`[DONE]` ou fim do body), o timer é limpo
 
-**Implementação:** `src/streamHttpEvent.ts:72-89` e `src/streamHttpEvent.ts:56-70`
+**Implementação:** `src/streamHttpEvent.ts:72-99` e `src/streamHttpEvent.ts:56-70`
 
 ---
 
@@ -370,13 +374,13 @@ O parâmetro `encodeBytes` controla o formato de saída da `ReadableStream`:
 
 | `encodeBytes` | Tipo de cada chunk | Uso |
 |---|---|---|
-| `false` ou `undefined` | `string` (JSON puro) | Consumo direto em código, fácil de logar e debugar |
+| `false` ou `undefined` | `object` (objeto parseado) | Consumo direto em código, fácil de logar e debugar |
 | `true` | `Uint8Array` | Piping para outra stream, gravação em arquivo, consumo binário |
 
 **Exemplo com `encodeBytes: false`:**
 ```typescript
 const stream = await stream.fetchIA({ encodeBytes: false });
-// stream.getReader().read() → { value: '{"content":"Olá"}', done: false }
+// stream.getReader().read() → { value: { content: "Olá" }, done: false }
 ```
 
 **Exemplo com `encodeBytes: true`:**
@@ -416,7 +420,7 @@ stream.dataFetch({
 });
 
 async function main() {
-    const readableStream = await stream.fetchIA<string>({
+    const readableStream = await stream.fetchIA({
         body: JSON.stringify({
             model: "gpt-4o",
             messages: [{ role: "user", content: "Explique o que é Server-Sent Events" }],
@@ -437,7 +441,7 @@ async function main() {
     while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        process.stdout.write(JSON.parse(value as string).content);
+        process.stdout.write((value as { content: string }).content);
     }
     console.log("\n--- Fim do stream ---");
 }
@@ -533,7 +537,7 @@ const reader = readableStream.getReader();
 while (true) {
     const { value, done } = await reader.read();
     if (done) break;
-    const parsed = JSON.parse(value as string);
+    const parsed = value as { text?: string };
     if (parsed.text) process.stdout.write(parsed.text);
 }
 ```
@@ -716,7 +720,7 @@ interface dataFetchType {
     extractor?: extractorType[];
 }
 
-interface FetchOptions<O extends object = object> {
+interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
@@ -738,7 +742,7 @@ interface timeOutControlType {
 }
 
 interface stateLocalType {
-    getState: () => unknown | undefined;
+    getState: () => unknown | Record<string, unknown>;
     getStateOne: (key: string) => unknown | undefined;
     setState: (newState: Record<string, unknown>) => void;
     clearState: () => void;
@@ -798,7 +802,7 @@ pnpm add @felipe-lib/stream-http-event
 - **Smart buffering** — Handles network chunks that arrive mid-line in SSE data
 - **Inactivity timeout** — Automatically errors the stream if the provider stops sending data
 - **Extractor system** — Maps raw AI response shapes into custom output objects
-- **Dual encoding** — Output as `string` (raw JSON) or `Uint8Array` (encoded bytes)
+- **Dual encoding** — Output as object (parsed) or `Uint8Array` (encoded bytes)
 - **`[DONE]` detection** — Recognizes the standard SSE stream termination signal
 - **JSON fallback** — If the endpoint doesn't return `text/event-stream`, parses it as plain JSON
 - **AbortSignal support** — Cancellation via `AbortController`
@@ -820,14 +824,14 @@ type dataFetchType = {
 }
 ```
 
-#### `fetchIA<O extends object>(options: FetchOptions): Promise<ReadableStream<O> | O>`
+#### `fetchIA(options: FetchOptions): Promise<ReadableStream | object>`
 
-Executes the HTTP request and returns the result. If the response `content-type` is `text/event-stream`, returns a `ReadableStream<O>`. Otherwise, parses the response as JSON and returns object `O`.
+Executes the HTTP request and returns the result. If the response `content-type` is `text/event-stream`, returns a `ReadableStream`. Otherwise, parses the response as JSON and returns the object.
 
 ```typescript
-type FetchOptions<O extends object = object> = {
+type FetchOptions = {
     signal?: AbortSignal;       // Cancellation signal
-    encodeBytes?: boolean;      // true = Uint8Array, false/undefined = string
+    encodeBytes?: boolean;      // true = Uint8Array, false/undefined = object
     method?: string;            // HTTP method (default: "POST")
     body?: string;              // Request body (JSON string)
     extractor?: extractorType[];// Call-specific extractors (overrides defaults)
@@ -885,7 +889,7 @@ Three simple operations:
 
 #### The Serialization Algorithm
 
-In the `serialize()` method (`src/streamHttpEvent.ts:91-153`):
+In the `serialize()` method (`src/streamHttpEvent.ts:99-164`):
 
 ```typescript
 const lines = buffer.getBuffer().split("\n");   // Split buffer by newlines
@@ -1020,7 +1024,7 @@ Six operations:
 
 #### The Extractor + State Algorithm
 
-In the `serialize()` method (`src/streamHttpEvent.ts:120-144`), for each parsed `data:` line:
+In the `serialize()` method (`src/streamHttpEvent.ts:128-164`), for each parsed `data:` line:
 
 ```typescript
 if (extractor) {
@@ -1034,7 +1038,11 @@ if (extractor) {
 }
 
 // 4. Decide what to enqueue: extracted state or raw JSON
-controller.enqueue(JSON.stringify(extractedState ?? parsedData));
+if (encodeBytes) {
+    controller.enqueue(encoder.encode(JSON.stringify(extractedState ?? parsedData) + "\n"));
+} else {
+    controller.enqueue(extractedState ?? parsedData);
+}
 
 state.clearState();  // 5. Clear state for the next SSE line
 ```
@@ -1122,7 +1130,7 @@ stream.dataFetch({
    - The `bodyReader` is cancelled (aborting the underlying fetch)
 4. If the stream ends normally (`[DONE]` or body end), the timer is cleared
 
-**Implementation:** `src/streamHttpEvent.ts:72-89` and `src/streamHttpEvent.ts:56-70`
+**Implementation:** `src/streamHttpEvent.ts:72-99` and `src/streamHttpEvent.ts:56-70`
 
 ---
 
@@ -1132,13 +1140,13 @@ The `encodeBytes` parameter controls the `ReadableStream` output format:
 
 | `encodeBytes` | Each chunk type | Use case |
 |---|---|---|
-| `false` or `undefined` | `string` (raw JSON) | Direct consumption in code, easy to log and debug |
+| `false` or `undefined` | `object` (parsed object) | Direct consumption in code, easy to log and debug |
 | `true` | `Uint8Array` | Piping to another stream, writing to files, binary consumption |
 
 **Example with `encodeBytes: false`:**
 ```typescript
 const stream = await stream.fetchIA({ encodeBytes: false });
-// stream.getReader().read() → { value: '{"content":"Hello"}', done: false }
+// stream.getReader().read() → { value: { content: "Hello" }, done: false }
 ```
 
 **Example with `encodeBytes: true`:**
@@ -1178,7 +1186,7 @@ stream.dataFetch({
 });
 
 async function main() {
-    const readableStream = await stream.fetchIA<string>({
+    const readableStream = await stream.fetchIA({
         body: JSON.stringify({
             model: "gpt-4o",
             messages: [{ role: "user", content: "Explain Server-Sent Events" }],
@@ -1199,7 +1207,7 @@ async function main() {
     while (true) {
         const { value, done } = await reader.read();
         if (done) break;
-        process.stdout.write(JSON.parse(value as string).content);
+        process.stdout.write((value as { content: string }).content);
     }
     console.log("\n--- End of stream ---");
 }
@@ -1295,7 +1303,7 @@ const reader = readableStream.getReader();
 while (true) {
     const { value, done } = await reader.read();
     if (done) break;
-    const parsed = JSON.parse(value as string);
+    const parsed = value as { text?: string };
     if (parsed.text) process.stdout.write(parsed.text);
 }
 ```
@@ -1477,7 +1485,7 @@ interface dataFetchType {
     extractor?: extractorType[];
 }
 
-interface FetchOptions<O extends object = object> {
+interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
@@ -1499,7 +1507,7 @@ interface timeOutControlType {
 }
 
 interface stateLocalType {
-    getState: () => unknown | undefined;
+    getState: () => unknown | Record<string, unknown>;
     getStateOne: (key: string) => unknown | undefined;
     setState: (newState: Record<string, unknown>) => void;
     clearState: () => void;
@@ -1536,10 +1544,10 @@ interface streamIaType {
 ```
 .
 ├── src/
-│   ├── streamHttpEvent.ts    # Classe principal (257 linhas)
+│   ├── streamHttpEvent.ts    # Classe principal (276 linhas)
 │   └── type.ts               # Definições de tipos (61 linhas)
 ├── dist/                     # Saída compilada (ES2022 ESM)
-├── package.json              # v1.3.6, zero dependências de runtime
+├── package.json              # v1.3.9, zero dependências de runtime
 ├── tsconfig.json             # target: ES2022, module: ES2022, strict: true
 └── README.md
 ```
