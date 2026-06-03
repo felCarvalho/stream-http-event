@@ -19,25 +19,31 @@ export interface stateLocalType {
     hasStateByKey: (key: string) => boolean;
 }
 
-export interface extractorType {
-    key: string;
-    fn: (data: Record<string, any>) => Record<string, any>;
+export interface extractorType<TData extends object, TEvent = unknown> {
+    fn: ({
+        data,
+        event,
+    }: {
+        data: TData;
+        event: TEvent;
+    }) => Record<string, unknown>;
 }
 
-export interface dataFetchType {
+export interface dataFetchType<TData extends object, TEvent = unknown> {
     url: string;
     headers?: Record<string, string>;
     timeOut?: number;
-    extractor?: extractorType[];
+    extractor?: extractorType<TData, TEvent>[];
 }
 
-export interface serializeType {
+export interface serializeType<TData extends object, TEvent = unknown> {
     buffer: bufferControlType;
     controller: ReadableStreamDefaultController<any>;
     encoder: TextEncoder;
-    extractor?: extractorType[];
-    encodeBytes: undefined | boolean;
+    extractor?: extractorType<TData, TEvent>[];
+    encodeBytes: boolean | undefined;
     state: stateLocalType;
+    stateLongDuration: stateLocalType;
 }
 
 export interface timeoutType {
@@ -46,16 +52,16 @@ export interface timeoutType {
     bodyReader: ReadableStreamDefaultReader<Uint8Array<ArrayBufferLike>>;
 }
 
-export interface streamIaType {
+export interface streamIaType<TData extends object, TEvent = unknown> {
     body: ReadableStream<Uint8Array>;
     encodeBytes: boolean | undefined;
-    extractor?: extractorType[];
+    extractor?: extractorType<TData, TEvent>[];
 }
 
-export interface FetchOptions {
+export interface FetchOptions<TData extends object, TEvent = unknown> {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
     body?: string;
-    extractor?: extractorType[];
+    extractor?: extractorType<TData, TEvent>[];
 }

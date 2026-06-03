@@ -5,15 +5,21 @@ import type {
     streamIaType,
     FetchOptions,
     extractorType,
+    stateLocalType,
 } from "./type.js";
 
-export class StreamHttpEvent {
-    private url?: string;
-    private headers?: Record<string, string> = {};
+export class StreamHttpEvent<TData extends object, TEvent = unknown> {
+    private url: string = "";
+    private headers: Record<string, string> = {};
     private timeOut?: number;
-    private extractor?: extractorType[];
+    private extractor?: extractorType<TData, TEvent>[];
 
-    public dataFetch({ url, headers, timeOut, extractor }: dataFetchType) {
+    public dataFetch({
+        url,
+        headers,
+        timeOut,
+        extractor,
+    }: dataFetchType<TData, TEvent>) {
         this.url = url;
         this.headers = headers ?? {};
         this.timeOut = timeOut;
@@ -69,30 +75,78 @@ export class StreamHttpEvent {
         };
     }
 
-    private async timeout({ controller, timeOutId, bodyReader }: timeoutType) {
+    private timeout({ controller, timeOutId, bodyReader }: timeoutType) {
         if (timeOutId.getTime()) {
             timeOutId.clearTime();
         }
 
-        if (this.timeOut) {
-            timeOutId.setTime({
-                id: setTimeout(async () => {
-                    try {
-                        await bodyReader.cancel();
-                    } catch (error) {
-                        console.error(error);
-                    }
-                    try {
-                        controller.error(
-                            new Error(
-                                `Ops, Seu provedor de IA demorou mais de ${this.timeOut}ms`,
-                            ),
-                        );
-                    } catch (error) {
-                        console.error(error);
-                    }
-                }, this.timeOut),
-            });
+        if (!this.timeOut) {
+            return;
+        }
+
+        timeOutId.setTime({
+            id: setTimeout(async () => {
+                try {
+                    await bodyReader.cancel();
+                } catch (error) {
+                    console.error(error);
+                }
+                try {
+                    controller.error(
+                        new Error(
+                            `Ops, Seu provedor de IA demorou mais de ${this.timeOut}ms`,
+                        ),
+                    );
+                } catch (error) {
+                    throw new Error(
+                        `Ops, erro ao envio error pelo controller de timeout: ${error}`,
+                    );
+                }
+            }, this.timeOut),
+        });
+    }
+
+    private parseAndExtracted<TData extends object, TEvent = unknown>({
+        line,
+        state,
+        eventName,
+        extractor,
+    }: {
+        line: string;
+        state: stateLocalType;
+        extractor: extractorType<TData, TEvent>[];
+        eventName: "data" | "event";
+    }) {
+        const clear = line.trim().slice(`${eventName}: `.length);
+
+        if (clear) {
+            eventName === "event" &&
+                state.setState({ event: JSON.parse(clear) });
+
+            eventName === "data" && state.setState({ data: JSON.parse(clear) });
+
+            try {
+                eventName === "data" &&
+                    state.setState({ data: JSON.parse(clear) });
+            } catch (e) {
+                throw new Error(
+                    `Falha ao armazenar chunks para extração de informações: ${e}`,
+                );
+            }
+
+            const data = state.getStateOne("data") as TData;
+            const event = state.getStateOne("event") as TEvent;
+
+            if (extractor.length && (data || event)) {
+                for (const extItem of extractor) {
+                    state.setState({
+                        extracted: extItem.fn({
+                            data,
+                            event,
+                        }),
+                    });
+                }
+            }
         }
     }
 
@@ -103,57 +157,69 @@ export class StreamHttpEvent {
         extractor,
         encodeBytes,
         state,
-    }: serializeType) {
+        stateLongDuration,
+    }: serializeType<TData, TEvent>) {
         const lines = buffer.getBuffer().split("\n");
         buffer.setBuffer(lines.pop() ?? "");
 
         for (const line of lines) {
-            const trimmedLine = line.trim();
+            const trimmed = line.trim();
 
-            if (!trimmedLine) continue;
-
-            if (trimmedLine === "data: [DONE]") {
+            if (trimmed === "data: [DONE]") {
                 try {
                     controller.close();
                 } catch (error) {
-                    console.error(error);
+                    throw new Error(`Erro ao fechar o controller: ${error}`);
                 }
                 return true;
             }
 
-            if (trimmedLine.startsWith("data:")) {
-                const cleanData = trimmedLine.slice("data:".length).trim();
+            if (trimmed.startsWith("data:")) {
+                this.parseAndExtracted({
+                    line: trimmed,
+                    state,
+                    extractor: extractor ?? [],
+                    eventName: "data",
+                });
+                const data = state.getStateOne("data") as TData;
+                stateLongDuration.setState({ data });
+            }
 
-                if (cleanData) {
-                    let parsedData;
+            if (trimmed.startsWith("event:")) {
+                this.parseAndExtracted({
+                    line: trimmed,
+                    state,
+                    extractor: extractor ?? [],
+                    eventName: "event",
+                });
+            }
 
-                    try {
-                        parsedData = JSON.parse(cleanData);
-                    } catch (error) {
-                        console.error(error);
-                        state.clearState();
-                        continue;
-                    }
-                    let extractedState;
+            if (state.hasStateByKey("extracted")) {
+                const extracted = state.getStateOne("extracted") as Record<
+                    string,
+                    any
+                >;
+                const extractedLongDuration = stateLongDuration.getStateOne(
+                    "extractedLongDuration",
+                ) as Record<string, any>;
 
-                    if (extractor) {
-                        for (const fn of extractor) {
-                            state.setState(fn.fn(parsedData));
+                stateLongDuration.setState({
+                    extractedLongDuration: {
+                        ...extractedLongDuration,
+                        ...extracted,
+                    },
+                });
 
-                            if (state.hasStateByKey(fn.key)) {
-                                extractedState = state.getState();
-                            }
-                        }
-                    }
-
+                try {
                     if (encodeBytes) {
-                        const stringFy = JSON.stringify(
-                            extractedState ?? parsedData,
+                        controller.enqueue(
+                            encoder.encode(JSON.stringify(extracted)),
                         );
-                        controller.enqueue(encoder.encode(stringFy + "\n"));
                     } else {
-                        controller.enqueue(extractedState ?? parsedData);
+                        controller.enqueue(extracted);
                     }
+                } catch (e) {
+                    throw new Error(`Falha no envio de dados: ${e}`);
                 }
 
                 state.clearState();
@@ -163,11 +229,16 @@ export class StreamHttpEvent {
         return false;
     }
 
-    private streamIA({ body, encodeBytes, extractor }: streamIaType) {
+    private streamIA({
+        body,
+        encodeBytes,
+        extractor,
+    }: streamIaType<TData, TEvent>) {
         const bodyReader = body.getReader();
         const buffer = this.bufferControl();
         const timeOutId = this.timeOutControl();
         const state = this.stateLocal();
+        const stateLongDuration = this.stateLocal();
         const decoder: TextDecoder = new TextDecoder();
         const encoder: TextEncoder = new TextEncoder();
 
@@ -184,7 +255,9 @@ export class StreamHttpEvent {
                             try {
                                 controller.close();
                             } catch (error) {
-                                console.error(error);
+                                throw new Error(
+                                    `Falha ao fechar o controller: ${error}`,
+                                );
                             }
                             break;
                         }
@@ -210,6 +283,7 @@ export class StreamHttpEvent {
                             extractor,
                             encodeBytes,
                             state,
+                            stateLongDuration,
                         });
                         if (isDone) {
                             timeOutId.clearTime();
@@ -220,15 +294,19 @@ export class StreamHttpEvent {
                     timeOutId.clearTime();
                     try {
                         controller.error(error);
-                    } catch {
-                        console.error(error);
+                    } catch (error) {
+                        throw new Error(
+                            `Falha ao enviar error ao controller: ${error}`,
+                        );
                     }
                 } finally {
                     try {
                         await bodyReader.cancel();
                         bodyReader.releaseLock();
                     } catch (error) {
-                        console.error(error);
+                        throw new Error(
+                            `Falha ao cancelar ou liberar o lock do bodyReader: ${error}`,
+                        );
                     }
                 }
             },
@@ -241,7 +319,7 @@ export class StreamHttpEvent {
         method,
         body,
         extractor,
-    }: FetchOptions) {
+    }: FetchOptions<TData, TEvent>) {
         if (!this.url) {
             throw new Error("dataFetch() precisa da url do seu provedor de IA");
         }
