@@ -13,17 +13,20 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
     private headers: Record<string, string> = {};
     private timeOut?: number;
     private extractor?: extractorType<TData, TEvent>[];
+    private onDone?: (finalData: Record<string, unknown>) => void;
 
     public dataFetch({
         url,
         headers,
         timeOut,
         extractor,
+        onDone,
     }: dataFetchType<TData, TEvent>) {
         this.url = url;
         this.headers = headers ?? {};
         this.timeOut = timeOut;
         this.extractor = extractor;
+        this.onDone = onDone;
     }
 
     private stateLocal() {
@@ -98,8 +101,8 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                         ),
                     );
                 } catch (error) {
-                    throw new Error(
-                        `Ops, erro ao envio error pelo controller de timeout: ${error}`,
+                    console.error(
+                        `Ops, erro ao enviar error pelo controller de timeout: ${error}`,
                     );
                 }
             }, this.timeOut),
@@ -120,12 +123,10 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
         const clear = line.trim().slice(`${eventName}: `.length);
 
         if (clear) {
-            eventName === "event" &&
-                state.setState({ event: JSON.parse(clear) });
-
-            eventName === "data" && state.setState({ data: JSON.parse(clear) });
-
             try {
+                eventName === "event" &&
+                    state.setState({ event: JSON.parse(clear) });
+
                 eventName === "data" &&
                     state.setState({ data: JSON.parse(clear) });
             } catch (e) {
@@ -286,6 +287,10 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                             stateLongDuration,
                         });
                         if (isDone) {
+                            const finalData = stateLongDuration.getStateOne(
+                                "extractedLongDuration",
+                            ) as Record<string, unknown> | undefined;
+                            this.onDone?.(finalData ?? {});
                             timeOutId.clearTime();
                             break;
                         }
@@ -309,6 +314,10 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                         );
                     }
                 }
+            },
+            cancel() {
+                timeOutId.clearTime();
+                bodyReader.cancel().catch(() => {});
             },
         });
     }
@@ -346,7 +355,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                 body: fetcher.body,
                 encodeBytes,
                 extractor: extractor ?? this.extractor,
-            }) as ReadableStream;
+            }) as ReadableStream<Record<string, unknown> | Uint8Array>;
         } else {
             return await fetcher.json();
         }

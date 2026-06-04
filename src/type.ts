@@ -11,7 +11,7 @@ export interface timeOutControlType {
 }
 
 export interface stateLocalType {
-    getState: () => unknown | Record<string, unknown>;
+    getState: () => Record<string, unknown>;
     getStateOne: (key: string) => unknown | undefined;
     setState: (newState: Record<string, unknown>) => void;
     clearState: () => void;
@@ -34,11 +34,12 @@ export interface dataFetchType<TData extends object, TEvent = unknown> {
     headers?: Record<string, string>;
     timeOut?: number;
     extractor?: extractorType<TData, TEvent>[];
+    onDone?: (finalData: Record<string, unknown>) => void;
 }
 
 export interface serializeType<TData extends object, TEvent = unknown> {
     buffer: bufferControlType;
-    controller: ReadableStreamDefaultController<any>;
+    controller: ReadableStreamDefaultController<Record<string, unknown> | Uint8Array>;
     encoder: TextEncoder;
     extractor?: extractorType<TData, TEvent>[];
     encodeBytes: boolean | undefined;
@@ -47,7 +48,7 @@ export interface serializeType<TData extends object, TEvent = unknown> {
 }
 
 export interface timeoutType {
-    controller: ReadableStreamDefaultController<any>;
+    controller: ReadableStreamDefaultController<Record<string, unknown> | Uint8Array>;
     timeOutId: timeOutControlType;
     bodyReader: ReadableStreamDefaultReader<Uint8Array<ArrayBufferLike>>;
 }
