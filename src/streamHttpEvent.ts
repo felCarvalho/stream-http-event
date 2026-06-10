@@ -357,7 +357,16 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                 extractor: extractor ?? this.extractor,
             }) as ReadableStream<Record<string, unknown> | Uint8Array>;
         } else {
-            return await fetcher.json();
+            const extractors = extractor ?? this.extractor;
+            let data = await fetcher.json();
+
+            if (extractors) {
+                for (const extItem of extractors) {
+                    data = extItem.fn({ data });
+                }
+            }
+
+            return data;
         }
     }
 }
