@@ -91,7 +91,7 @@ pnpm add @felipe-lib/stream-http-event
 1. `dataFetch()` — configura a instância (URL, headers, timeout, extratores, callback `onDone`). Chame uma vez.
 2. `fetchIA()` — executa a requisição. Retorna um `ReadableStream` (se a resposta for `text/event-stream`) ou um objeto JSON parseado (fallback para não-streaming).
 
-**Extratores** são funções `({ data, event }) => Record<string, unknown>` que mapeiam cada chunk SSE para o formato desejado. Sem extratores, nada é enfileirado no stream. Com extratores, cada chunk se torna o que sua função retornar.
+**Extratores** são funções `({ data, event? }) => Record<string, unknown>` que mapeiam os dados para o formato desejado. No streaming, cada chunk SSE é processado. No fallback JSON (não-streaming), os extratores são aplicados sequencialmente sobre o JSON parseado (sem `event`). Sem extratores, nada é enfileirado no stream. Com extratores, cada chunk se torna o que sua função retornar.
 
 ---
 
@@ -133,7 +133,7 @@ stream.fetchIA(options: FetchOptions): Promise<ReadableStream | object>
 
 **Retorna:**
 - `ReadableStream<Record<string, unknown> | Uint8Array>` — se `Content-Type` for `text/event-stream`
-- `object` — a resposta JSON parseada para requisições não-streaming
+- `object` — a resposta JSON parseada para requisições não-streaming. Se houver extratores (de instância ou por chamada), eles são aplicados sequencialmente sobre o JSON.
 
 **Erros:**
 - Lança erro se `dataFetch()` não foi chamado (nenhuma URL configurada).
@@ -144,19 +144,19 @@ stream.fetchIA(options: FetchOptions): Promise<ReadableStream | object>
 
 ### `extractorType`
 
-Cada função extratora recebe os campos `data` e `event` parseados da linha SSE atual.
+Cada função extratora recebe os campos `data` e `event` (opcional) do chunk atual.
 
 ```typescript
 type extractorType<TData extends object, TEvent = unknown> = {
-    fn: ({ data, event }: { data: TData; event: TEvent }) => Record<string, unknown>;
+    fn: ({ data, event }: { data: TData; event?: TEvent }) => Record<string, unknown>;
 };
 ```
 
 **Comportamento:**
-- Ambos `data` e `event` são sempre passados — você escolhe qual usar.
+- `event` é **opcional** — ausente em respostas JSON não-streaming.
 - Se sua função retornar `{}` (vazio), nada é enfileirado para aquele chunk.
-- Múltiplos extratores rodam sequencialmente por linha. O resultado do **último** extrator determina o que é enfileirado.
-- Valores se acumulam em `extractedLongDuration` via spread merge (`{ ...antigo, ...novo }`) e são entregues ao `onDone` quando o stream encerra.
+- **Streaming:** múltiplos extratores rodam sequencialmente por linha. O resultado do **último** extrator determina o que é enfileirado. Valores se acumulam em `extractedLongDuration` via spread merge (`{ ...antigo, ...novo }`) e são entregues ao `onDone` quando o stream encerra.
+- **JSON (não-streaming):** todos os extratores são aplicados em sequência, e o resultado de cada um alimenta o `data` do próximo. O resultado final é retornado diretamente (não passa por `extractedLongDuration` nem `onDone`).
 
 ---
 
@@ -327,12 +327,17 @@ O objeto `finalData` é o spread-merge de cada chunk extraído. Sem extratores, 
 
 ### Fallback Não-Streaming
 
-Se a resposta não for `text/event-stream`, `fetchIA()` retorna um objeto JSON parseado:
+Se a resposta não for `text/event-stream`, `fetchIA()` retorna um objeto JSON parseado. Os extratores configurados em `dataFetch()` também são aplicados — basta omitir `stream: true` no body:
 
 ```typescript
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: { "Authorization": "Bearer sk-..." }
+    headers: { "Authorization": "Bearer sk-..." },
+    extractor: [{
+        fn: ({ data }) => ({
+            content: data.choices?.[0]?.message?.content ?? ""
+        })
+    }]
 });
 
 const result = await stream.fetchIA({
@@ -343,8 +348,10 @@ const result = await stream.fetchIA({
     })
 });
 
-console.log(result.choices[0].message.content);
+console.log(result.content); // extraído pelo extrator
 ```
+
+Sem extratores, o JSON cru da API é retornado (ex.: `result.choices[0].message.content`).
 
 ---
 
@@ -455,7 +462,7 @@ interface FetchOptions<TData extends object, TEvent = unknown> {
 }
 
 interface extractorType<TData extends object, TEvent = unknown> {
-    fn: ({ data, event }: { data: TData; event: TEvent }) => Record<string, unknown>;
+    fn: ({ data, event }: { data: TData; event?: TEvent }) => Record<string, unknown>;
 }
 ```
 
@@ -578,7 +585,7 @@ pnpm add @felipe-lib/stream-http-event
 1. `dataFetch()` — configure the instance (URL, headers, timeout, extractors, `onDone` callback). Call once.
 2. `fetchIA()` — execute the request. Returns a `ReadableStream` (if the response is `text/event-stream`) or a parsed JSON object (fallback for non-streaming).
 
-**Extractors** are functions `({ data, event }) => Record<string, unknown>` that map each SSE chunk into the shape you want. Without extractors, nothing is enqueued to the stream. With extractors, each chunk becomes whatever your function returns.
+**Extractors** are functions `({ data, event? }) => Record<string, unknown>` that map data into the shape you want. In streaming mode, each SSE chunk is processed. In JSON fallback (non-streaming), extractors are applied sequentially over the parsed JSON (no `event`). Without extractors, nothing is enqueued to the stream. With extractors, each chunk becomes whatever your function returns.
 
 ---
 
@@ -620,7 +627,7 @@ stream.fetchIA(options: FetchOptions): Promise<ReadableStream | object>
 
 **Returns:**
 - `ReadableStream<Record<string, unknown> | Uint8Array>` — if `Content-Type` is `text/event-stream`
-- `object` — the parsed JSON response for non-streaming requests
+- `object` — the parsed JSON response for non-streaming requests. If extractors are configured (instance-level or per-call), they are applied sequentially over the JSON.
 
 **Errors:**
 - Throws if `dataFetch()` was not called (no URL configured).
@@ -631,19 +638,19 @@ stream.fetchIA(options: FetchOptions): Promise<ReadableStream | object>
 
 ### `extractorType`
 
-Each extractor function receives the parsed `data` and `event` from the current SSE line.
+Each extractor function receives the parsed `data` and `event` (optional) from the current chunk.
 
 ```typescript
 type extractorType<TData extends object, TEvent = unknown> = {
-    fn: ({ data, event }: { data: TData; event: TEvent }) => Record<string, unknown>;
+    fn: ({ data, event }: { data: TData; event?: TEvent }) => Record<string, unknown>;
 };
 ```
 
 **Behavior:**
-- Both `data` and `event` are always passed — you choose which to use.
+- `event` is **optional** — absent in non-streaming JSON responses.
 - If your function returns `{}` (empty), nothing is enqueued for that chunk.
-- Multiple extractors run sequentially per line. The **last** extractor's result determines what gets enqueued.
-- Values accumulate in `extractedLongDuration` via spread merge (`{ ...old, ...new }`) and are delivered to `onDone` when the stream ends.
+- **Streaming:** multiple extractors run sequentially per line. The **last** extractor's result determines what gets enqueued. Values accumulate in `extractedLongDuration` via spread merge (`{ ...old, ...new }`) and are delivered to `onDone` when the stream ends.
+- **JSON (non-streaming):** all extractors are applied in sequence, each result feeding the next one's `data`. The final result is returned directly (does not go through `extractedLongDuration` or `onDone`).
 
 ---
 
@@ -814,12 +821,17 @@ The `finalData` object is the spread-merge of every extracted chunk. Without ext
 
 ### Non-Streaming Fallback
 
-If the response is not `text/event-stream`, `fetchIA()` returns a plain parsed JSON object:
+If the response is not `text/event-stream`, `fetchIA()` returns a parsed JSON object. Extractors configured in `dataFetch()` are also applied — simply omit `stream: true` from the body:
 
 ```typescript
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: { "Authorization": "Bearer sk-..." }
+    headers: { "Authorization": "Bearer sk-..." },
+    extractor: [{
+        fn: ({ data }) => ({
+            content: data.choices?.[0]?.message?.content ?? ""
+        })
+    }]
 });
 
 const result = await stream.fetchIA({
@@ -830,8 +842,10 @@ const result = await stream.fetchIA({
     })
 });
 
-console.log(result.choices[0].message.content);
+console.log(result.content); // extracted by the extractor
 ```
+
+Without extractors, the raw API JSON is returned (e.g. `result.choices[0].message.content`).
 
 ---
 
@@ -942,7 +956,7 @@ interface FetchOptions<TData extends object, TEvent = unknown> {
 }
 
 interface extractorType<TData extends object, TEvent = unknown> {
-    fn: ({ data, event }: { data: TData; event: TEvent }) => Record<string, unknown>;
+    fn: ({ data, event }: { data: TData; event?: TEvent }) => Record<string, unknown>;
 }
 ```
 
