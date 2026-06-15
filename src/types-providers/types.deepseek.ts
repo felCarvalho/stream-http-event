@@ -1,63 +1,62 @@
-interface DeepSeekHeaders<apiKey extends string> {
-    method: "POST";
-    hostname: "api.deepseek.com";
-    path: "/chat/completions";
-    headers: {
-        "Content-Type": "application/json";
-        Accept: "application/json";
-        Authorization: `Bearer ${apiKey}`;
-    };
-    maxRedirects: 20;
-}
-
-interface DeepSeekMessage {
-    content: string;
-    role: "system" | "user" | "assistant" | "tool";
-}
-
-export type DeepSeekModel = "deepseek-v4-pro" | "deepseek-v4-flash";
-
-export interface DeepSeekThinkingType {
-    type: "enabled" | "disabled";
-}
+export type DeepSeekModel = "deepseek-v4-flash" | "deepseek-v4-pro";
 
 export type DeepSeekReasoningEffort = "high" | "max";
 
-export interface DeepSeekResponseFormat {
-    type: "text" | "object";
+export type DeepSeekHeaders = Record<string, string>;
+
+export interface DeepSeekMessage {
+    content: string;
+    role: "system" | "user" | "assistant" | "tool";
+    name?: string;
+    tool_call_id?: string;
+    prefix?: boolean;
+    reasoning_content?: string | null;
 }
 
-export interface DeepSeekParamatersTools {
+export interface DeepSeekThinking {
+    type: "enabled" | "disabled";
+    reasoning_effort?: DeepSeekReasoningEffort;
+}
+
+export interface DeepSeekResponseFormat {
+    type: "text" | "json_object";
+}
+
+export interface DeepSeekToolParameters {
     type: "object";
     properties: Record<string, unknown>;
     required: string[];
 }
 
-export interface DeepSeekTools {
+export interface DeepSeekTool {
     type: "function";
     function: {
         name: string;
         description: string;
-        parameters: DeepSeekParamatersTools;
+        parameters?: DeepSeekToolParameters;
     };
     strict: boolean;
 }
 
-export interface DeepSeekBody {
+export interface DeepSeekRequestBody {
     messages: DeepSeekMessage[];
     model: DeepSeekModel;
-    thinking: DeepSeekThinkingType;
-    reasoning_effort: DeepSeekReasoningEffort;
-    max_tokens: number;
-    response_format: DeepSeekResponseFormat;
-    stop: null;
-    stream: number;
-    stream_options: null;
-    temperature: 1;
-    top_p: 1;
-    tools: DeepSeekTools[];
-    tool_choice: "none" | "auto" | "required";
-    logprobs: false;
-    top_logprobs: null;
-    user_id: string;
+    thinking?: DeepSeekThinking | null;
+    max_tokens?: number | null;
+    response_format?: DeepSeekResponseFormat | null;
+    stop?: string | string[] | null;
+    stream?: boolean | null;
+    stream_options?: { include_usage: boolean } | null;
+    temperature?: number | null;
+    top_p?: number | null;
+    tools?: DeepSeekTool[] | null;
+    tool_choice?:
+        | "none"
+        | "auto"
+        | "required"
+        | { type: "function"; function: { name: string } }
+        | null;
+    logprobs?: boolean | null;
+    top_logprobs?: number | null;
+    user_id?: string | null;
 }

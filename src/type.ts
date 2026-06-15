@@ -29,13 +29,18 @@ export interface extractorType<TData extends object, TEvent = unknown> {
     }) => Record<string, unknown>;
 }
 
-export interface dataFetchType<TData extends object, TEvent = unknown> {
+export interface dataFetchType<
+    TData extends object,
+    TEvent = unknown,
+    H extends Record<string, string> = Record<string, string>,
+    B extends Record<string, unknown> = Record<string, unknown>,
+> {
     url: string;
-    headers?: Record<string, string>;
+    headers?: H;
     timeOut?: number;
     extractor?: extractorType<TData, TEvent>[];
     onDone?: (finalData: Record<string, unknown>) => void;
-    body?: Record<string, unknown>;
+    body?: B;
 }
 
 export interface serializeType<TData extends object, TEvent = unknown> {

@@ -7,7 +7,6 @@ import type {
     extractorType,
     stateLocalType,
 } from "./type.js";
-
 export class StreamHttpEvent<TData extends object, TEvent = unknown> {
     private url: string = "";
     private headers: Record<string, string> = {};
@@ -16,16 +15,19 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
     private onDone?: (finalData: Record<string, unknown>) => void;
     private body?: Record<string, unknown>;
 
-    public dataFetch({
+    public dataFetch<
+        H extends Record<string, string> = Record<string, string>,
+        B extends Record<string, unknown> = Record<string, unknown>,
+    >({
         url,
         headers,
         body,
         timeOut,
         extractor,
         onDone,
-    }: dataFetchType<TData, TEvent>) {
+    }: dataFetchType<TData, TEvent, H, B>) {
         this.url = url;
-        this.headers = headers ?? {};
+        this.headers = headers ?? ({} as Record<string, string>);
         this.timeOut = timeOut;
         this.extractor = extractor;
         this.onDone = onDone;

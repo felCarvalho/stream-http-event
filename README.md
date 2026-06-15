@@ -22,8 +22,9 @@ Funciona em qualquer runtime com `fetch`, `AsyncGenerator`, `TextDecoder` e `Tex
   - [`extractorType`](#extractortype)
 - [Guias](#guias)
   - [Streaming Básico (OpenAI / Groq)](#streaming-básico-openai--groq)
-  - [Extratores por Provedor (Anthropic)](#extratores-por-provedor-anthropic)
-  - [Cancelamento](#cancelamento)
+- [Extratores por Provedor (Anthropic)](#extratores-por-provedor-anthropic)
+- [Builders por Provedor (DeepSeek)](#builders-por-provedor-deepseek)
+- [Cancelamento](#cancelamento)
   - [Salvando a Resposta Completa](#salvando-a-resposta-completa)
   - [Fallback Não-Streaming](#fallback-não-streaming)
   - [Pipe para Arquivo](#pipe-para-arquivo)
@@ -104,8 +105,8 @@ stream.dataFetch(config: dataFetchType): void
 | Parâmetro | Tipo | Obrigatório | Descrição |
 |-----------|------|-------------|-----------|
 | `url` | `string` | Sim | Endpoint do provedor de IA |
-| `headers` | `Record<string, string>` | Não | Headers HTTP (Authorization, Content-Type, etc.) |
-| `body` | `Record<string, unknown>` | Não | Corpo da requisição (serializado como JSON). Configure aqui em vez de passar via `fetchIA()`. |
+| `headers` | `Record<string, string>` ou tipo customizado via Builder | Não | Headers HTTP (Authorization, Content-Type, etc.). Pode ser tipado automaticamente ao usar um builder de provedor. |
+| `body` | `Record<string, unknown>` ou tipo customizado via Builder | Não | Corpo da requisição (serializado como JSON). Configure aqui ou use um builder de provedor para autocompletar todos os campos. |
 | `timeOut` | `number` | Não | Timeout de inatividade em milissegundos. Reseta a cada chunk. Sem limite de tempo total. |
 | `extractor` | `extractorType[]` | Não | Extratores padrão para todas as chamadas `fetchIA()`. |
 | `onDone` | `(finalData: Record<string, unknown>) => void` | Não | Callback disparado quando o stream termina. Recebe a resposta completa acumulada (merge de todos os chunks extraídos). Útil para salvar em banco de dados. |
@@ -254,6 +255,62 @@ for await (const chunk of generator) {
 
 ---
 
+### Builders por Provedor (DeepSeek)
+
+Use builders para montar headers e body com tipos exatos e autocompletar — sem decorar chaves nem digitar manualmente:
+
+```typescript
+import {
+    DeepSeekHeadersBuilder, DeepSeekBodyBuilder, DeepSeekMessageBuilder,
+    DeepSeekThinkingBuilder, DeepSeekToolBuilder, DeepSeekToolParametersBuilder,
+} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
+
+const stream = new StreamHttpEvent();
+
+stream.dataFetch({
+    url: "https://api.deepseek.com/chat/completions",
+    headers: new DeepSeekHeadersBuilder().apiKey("sk-seu-token").build(),
+    body: new DeepSeekBodyBuilder()
+        .model("deepseek-v4-pro")
+        .messages([
+            new DeepSeekMessageBuilder().role("system").content("Você é um assistente").build(),
+            new DeepSeekMessageBuilder().role("user").content("Qual o clima?").build(),
+        ])
+        .thinking(
+            new DeepSeekThinkingBuilder().type("enabled").reasoningEffort("high").build()
+        )
+        .tools([
+            new DeepSeekToolBuilder()
+                .name("getWeather")
+                .description("Busca clima da cidade")
+                .parameters(
+                    new DeepSeekToolParametersBuilder()
+                        .property("city", { type: "string", description: "Nome da cidade" })
+                        .required("city")
+                        .build()
+                )
+                .build(),
+        ])
+        .temperature(0.7)
+        .stream(true)
+        .build(),
+    extractor: [{
+        fn: ({ data }) => ({
+            content: data.choices?.[0]?.delta?.content ?? ""
+        })
+    }],
+});
+
+const generator = await stream.fetchIA();
+for await (const chunk of generator) {
+    process.stdout.write(chunk.content);
+}
+```
+
+Cada builder segue a interface correspondente. Se a interface mudar, o builder acompanha automaticamente. O `.build()` retorna o objeto tipado exato para `dataFetch()`.
+
+---
+
 ### Cancelamento
 
 **Via AbortController (antes da requisição começar):**
@@ -294,14 +351,28 @@ Quando o consumidor cancela via `break` ou `AbortSignal`, o `bodyReader` interno
 Use `onDone` para capturar os dados acumulados quando o stream terminar — ideal para persistir em banco de dados no backend:
 
 ```typescript
+import { DeepSeekHeadersBuilder, DeepSeekBodyBuilder, DeepSeekMessageBuilder } from "@felipe-lib/stream-http-event/builders-providers/deepseek";
+
 stream.dataFetch({
-    url: "https://api.deepseek.com/v1/chat/completions",
-    headers: { "Authorization": "Bearer sk-seu-token" },
-    body: {
-        model: "deepseek-chat",
-        messages: [{ role: "user", content: "Explique RAG" }],
-        stream: true
-    },
+    url: "https://api.deepseek.com/chat/completions",
+    headers: new DeepSeekHeadersBuilder().apiKey("sk-seu-token").build(),
+    body: new DeepSeekBodyBuilder()
+        .model("deepseek-v4-pro")
+        .messages([
+            new DeepSeekMessageBuilder().role("user").content("Explique RAG").build(),
+        ])
+        .stream(true)
+        .build(),
+    extractor: [{
+        fn: ({ data }) => ({
+            content: data.choices?.[0]?.delta?.content ?? ""
+        })
+    }],
+    onDone: (finalData) => {
+        console.log("Resposta completa:", finalData);
+        // await db.messages.update({ response: finalData.content });
+    }
+});
     extractor: [{
         fn: ({ data }) => ({
             content: data.choices?.[0]?.delta?.content ?? ""
@@ -440,10 +511,15 @@ const [openaiResult, groqResult] = await Promise.all([
 ```typescript
 // --- Tipos públicos ---
 
-interface dataFetchType<TData extends object, TEvent = unknown> {
+interface dataFetchType<
+    TData extends object,
+    TEvent = unknown,
+    H extends Record<string, string> = Record<string, string>,
+    B extends Record<string, unknown> = Record<string, unknown>,
+> {
     url: string;
-    headers?: Record<string, string>;
-    body?: Record<string, unknown>;
+    headers?: H;
+    body?: B;
     timeOut?: number;
     extractor?: extractorType<TData, TEvent>[];
     onDone?: (finalData: Record<string, unknown>) => void;
@@ -510,8 +586,9 @@ ISC
   - [`extractorType`](#extractortype-1)
 - [Guides](#guides-1)
   - [Basic Streaming (OpenAI / Groq)](#basic-streaming-openai--groq)
-  - [Per-Provider Extractors (Anthropic)](#per-provider-extractors-anthropic)
-  - [Cancellation](#cancellation-1)
+- [Per-Provider Extractors (Anthropic)](#per-provider-extractors-anthropic)
+- [Per-Provider Builders (DeepSeek)](#per-provider-builders-deepseek)
+- [Cancellation](#cancellation-1)
   - [Saving the Full Response](#saving-the-full-response)
   - [Non-Streaming Fallback](#non-streaming-fallback-1)
   - [Piping to File](#piping-to-file-1)
@@ -592,8 +669,8 @@ stream.dataFetch(config: dataFetchType): void
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `url` | `string` | Yes | AI provider endpoint |
-| `headers` | `Record<string, string>` | No | HTTP headers (Authorization, Content-Type, etc.) |
-| `body` | `Record<string, unknown>` | No | Request body (serialized as JSON). Configure here instead of passing via `fetchIA()`. |
+| `headers` | `Record<string, string>` or provider-specific Builder type | No | HTTP headers (Authorization, Content-Type, etc.). Automatically typed when using a provider builder. |
+| `body` | `Record<string, unknown>` or provider-specific Builder type | No | Request body (serialized as JSON). Configure here or use a provider builder for auto-completion of all fields. |
 | `timeOut` | `number` | No | Inactivity timeout in milliseconds. Resets on each chunk. No total-time limit. |
 | `extractor` | `extractorType[]` | No | Default extractors for every `fetchIA()` call. |
 | `onDone` | `(finalData: Record<string, unknown>) => void` | No | Callback fired when the stream ends. Receives the full accumulated response (merge of all extracted chunks). Useful for saving to a database. |
@@ -742,6 +819,62 @@ for await (const chunk of generator) {
 
 ---
 
+### Per-Provider Builders (DeepSeek)
+
+Use builders to construct headers and body with exact types and autocomplete — no memorizing keys or typing manually:
+
+```typescript
+import {
+    DeepSeekHeadersBuilder, DeepSeekBodyBuilder, DeepSeekMessageBuilder,
+    DeepSeekThinkingBuilder, DeepSeekToolBuilder, DeepSeekToolParametersBuilder,
+} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
+
+const stream = new StreamHttpEvent();
+
+stream.dataFetch({
+    url: "https://api.deepseek.com/chat/completions",
+    headers: new DeepSeekHeadersBuilder().apiKey("sk-your-token").build(),
+    body: new DeepSeekBodyBuilder()
+        .model("deepseek-v4-pro")
+        .messages([
+            new DeepSeekMessageBuilder().role("system").content("You are an assistant").build(),
+            new DeepSeekMessageBuilder().role("user").content("What's the weather?").build(),
+        ])
+        .thinking(
+            new DeepSeekThinkingBuilder().type("enabled").reasoningEffort("high").build()
+        )
+        .tools([
+            new DeepSeekToolBuilder()
+                .name("getWeather")
+                .description("Get the current weather for a city")
+                .parameters(
+                    new DeepSeekToolParametersBuilder()
+                        .property("city", { type: "string", description: "City name" })
+                        .required("city")
+                        .build()
+                )
+                .build(),
+        ])
+        .temperature(0.7)
+        .stream(true)
+        .build(),
+    extractor: [{
+        fn: ({ data }) => ({
+            content: data.choices?.[0]?.delta?.content ?? ""
+        })
+    }],
+});
+
+const generator = await stream.fetchIA();
+for await (const chunk of generator) {
+    process.stdout.write(chunk.content);
+}
+```
+
+Each builder follows the corresponding interface. If the interface changes, the builder automatically keeps pace. `.build()` returns the exact typed object for `dataFetch()`.
+
+---
+
 ### Cancellation
 
 **Via AbortController (before the request starts):**
@@ -782,14 +915,18 @@ When the consumer cancels via `break` or `AbortSignal`, the internal `bodyReader
 Use `onDone` to capture the accumulated data when the stream finishes — ideal for persisting to a database on the backend:
 
 ```typescript
+import { DeepSeekHeadersBuilder, DeepSeekBodyBuilder, DeepSeekMessageBuilder } from "@felipe-lib/stream-http-event/builders-providers/deepseek";
+
 stream.dataFetch({
-    url: "https://api.deepseek.com/v1/chat/completions",
-    headers: { "Authorization": "Bearer sk-your-token" },
-    body: {
-        model: "deepseek-chat",
-        messages: [{ role: "user", content: "Explain RAG" }],
-        stream: true
-    },
+    url: "https://api.deepseek.com/chat/completions",
+    headers: new DeepSeekHeadersBuilder().apiKey("sk-your-token").build(),
+    body: new DeepSeekBodyBuilder()
+        .model("deepseek-v4-pro")
+        .messages([
+            new DeepSeekMessageBuilder().role("user").content("Explain RAG").build(),
+        ])
+        .stream(true)
+        .build(),
     extractor: [{
         fn: ({ data }) => ({
             content: data.choices?.[0]?.delta?.content ?? ""
@@ -928,10 +1065,15 @@ const [openaiResult, groqResult] = await Promise.all([
 ```typescript
 // --- Public types ---
 
-interface dataFetchType<TData extends object, TEvent = unknown> {
+interface dataFetchType<
+    TData extends object,
+    TEvent = unknown,
+    H extends Record<string, string> = Record<string, string>,
+    B extends Record<string, unknown> = Record<string, unknown>,
+> {
     url: string;
-    headers?: Record<string, string>;
-    body?: Record<string, unknown>;
+    headers?: H;
+    body?: B;
     timeOut?: number;
     extractor?: extractorType<TData, TEvent>[];
     onDone?: (finalData: Record<string, unknown>) => void;
