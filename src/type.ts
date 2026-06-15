@@ -35,24 +35,17 @@ export interface dataFetchType<TData extends object, TEvent = unknown> {
     timeOut?: number;
     extractor?: extractorType<TData, TEvent>[];
     onDone?: (finalData: Record<string, unknown>) => void;
+    body?: Record<string, unknown>;
 }
 
 export interface serializeType<TData extends object, TEvent = unknown> {
     buffer: bufferControlType;
-    controller: ReadableStreamDefaultController<
-        Record<string, unknown> | Uint8Array
-    >;
-    encoder: TextEncoder;
     extractor?: extractorType<TData, TEvent>[];
-    encodeBytes: boolean | undefined;
     state: stateLocalType;
     stateLongDuration: stateLocalType;
 }
 
 export interface timeoutType {
-    controller: ReadableStreamDefaultController<
-        Record<string, unknown> | Uint8Array
-    >;
     timeOutId: timeOutControlType;
     bodyReader: ReadableStreamDefaultReader<Uint8Array<ArrayBufferLike>>;
 }

@@ -5,7 +5,7 @@
 
 **Zero dependências em runtime.** Consuma respostas HTTP em streaming de provedores de IA (OpenAI, Anthropic, Groq, DeepSeek, etc.) via o protocolo [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
 
-Funciona em qualquer runtime com `fetch`, `ReadableStream`, `TextDecoder` e `TextEncoder` — navegadores, Node.js 18+, Deno, Bun, Cloudflare Workers.
+Funciona em qualquer runtime com `fetch`, `AsyncGenerator`, `TextDecoder` e `TextEncoder` — navegadores, Node.js 18+, Deno, Bun, Cloudflare Workers.
 
 ---
 
@@ -46,6 +46,11 @@ const stream = new StreamHttpEvent();
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
     headers: { "Authorization": "Bearer sk-seu-token" },
+    body: {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Olá!" }],
+        stream: true
+    },
     extractor: [{
         fn: ({ data }) => ({
             content: data.choices?.[0]?.delta?.content ?? ""
@@ -54,20 +59,11 @@ stream.dataFetch({
 });
 
 // 2. Requisitar
-const readableStream = await stream.fetchIA({
-    body: JSON.stringify({
-        model: "gpt-4o",
-        messages: [{ role: "user", content: "Olá!" }],
-        stream: true
-    })
-}) as ReadableStream<{ content: string }>;
+const generator = await stream.fetchIA();
 
 // 3. Ler
-const reader = readableStream.getReader();
-while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    process.stdout.write(value.content);
+for await (const chunk of generator) {
+    process.stdout.write(chunk.content);
 }
 ```
 
@@ -85,13 +81,13 @@ pnpm add @felipe-lib/stream-http-event
 
 ## Conceitos Fundamentais
 
-**Qual problema isso resolve.** Provedores de IA retornam respostas em streaming como bytes SSE brutos. Fazer o parsing disso manualmente significa lidar com bufferização, divisão de linhas, detecção de `[DONE]` e formatos de resposta específicos de cada provedor. Esta biblioteca cuida de tudo isso e te entrega um `ReadableStream` limpo.
+**Qual problema isso resolve.** Provedores de IA retornam respostas em streaming como bytes SSE brutos. Fazer o parsing disso manualmente significa lidar com bufferização, divisão de linhas, detecção de `[DONE]` e formatos de resposta específicos de cada provedor. Esta biblioteca cuida de tudo isso e te entrega um `AsyncGenerator` limpo.
 
 **Padrão de dois passos.**
-1. `dataFetch()` — configura a instância (URL, headers, timeout, extratores, callback `onDone`). Chame uma vez.
-2. `fetchIA()` — executa a requisição. Retorna um `ReadableStream` (se a resposta for `text/event-stream`) ou um objeto JSON parseado (fallback para não-streaming).
+1. `dataFetch()` — configura a instância (URL, headers, body, timeout, extratores, callback `onDone`). Chame uma vez.
+2. `fetchIA()` — executa a requisição. Retorna um `AsyncGenerator` (se a resposta for `text/event-stream`) ou um objeto JSON parseado (fallback para não-streaming).
 
-**Extratores** são funções `({ data, event? }) => Record<string, unknown>` que mapeiam os dados para o formato desejado. No streaming, cada chunk SSE é processado. No fallback JSON (não-streaming), os extratores são aplicados sequencialmente sobre o JSON parseado (sem `event`). Sem extratores, nada é enfileirado no stream. Com extratores, cada chunk se torna o que sua função retornar.
+**Extratores** são funções `({ data, event? }) => Record<string, unknown>` que mapeiam os dados para o formato desejado. No streaming, cada chunk SSE é processado. No fallback JSON (não-streaming), os extratores são aplicados sequencialmente sobre o JSON parseado (sem `event`). Sem extratores, nada é enviado ao generator. Com extratores, cada chunk se torna o que sua função retornar.
 
 ---
 
@@ -109,31 +105,30 @@ stream.dataFetch(config: dataFetchType): void
 |-----------|------|-------------|-----------|
 | `url` | `string` | Sim | Endpoint do provedor de IA |
 | `headers` | `Record<string, string>` | Não | Headers HTTP (Authorization, Content-Type, etc.) |
+| `body` | `Record<string, unknown>` | Não | Corpo da requisição (serializado como JSON). Configure aqui em vez de passar via `fetchIA()`. |
 | `timeOut` | `number` | Não | Timeout de inatividade em milissegundos. Reseta a cada chunk. Sem limite de tempo total. |
-| `extractor` | `extractorType[]` | Não | Extratores padrão para todas as chamadas `fetchIA()`. Podem ser sobrescritos por chamada. |
+| `extractor` | `extractorType[]` | Não | Extratores padrão para todas as chamadas `fetchIA()`. |
 | `onDone` | `(finalData: Record<string, unknown>) => void` | Não | Callback disparado quando o stream termina. Recebe a resposta completa acumulada (merge de todos os chunks extraídos). Útil para salvar em banco de dados. |
 
 ---
 
 ### `fetchIA()`
 
-Executa a requisição HTTP e retorna um `ReadableStream` ou um objeto JSON parseado.
+Executa a requisição HTTP e retorna um `AsyncGenerator` ou um objeto JSON parseado.
 
 ```typescript
-stream.fetchIA(options: FetchOptions): Promise<ReadableStream | object>
+stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | object>
 ```
 
 | Parâmetro | Tipo | Obrigatório | Descrição |
 |-----------|------|-------------|-----------|
-| `body` | `string` | Não | Corpo da requisição (geralmente `JSON.stringify({...})`) |
 | `method` | `string` | Não | Método HTTP. Padrão: `"POST"` |
 | `signal` | `AbortSignal` | Não | Sinal do AbortController para cancelamento da requisição |
-| `encodeBytes` | `boolean` | Não | Se `true`, enfileira `Uint8Array`. Se `false`/`undefined`, enfileira objetos planos. |
-| `extractor` | `extractorType[]` | Não | Extratores por chamada. Sobrescreve os extratores definidos em `dataFetch()`. |
+| `encodeBytes` | `boolean` | Não | Se `true`, os chunks yieldados são `Uint8Array`. Se `false`/`undefined`, os chunks são objetos planos. |
 
 **Retorna:**
-- `ReadableStream<Record<string, unknown> | Uint8Array>` — se `Content-Type` for `text/event-stream`
-- `object` — a resposta JSON parseada para requisições não-streaming. Se houver extratores (de instância ou por chamada), eles são aplicados sequencialmente sobre o JSON.
+- `AsyncGenerator<Record<string, unknown> | Uint8Array, void, unknown>` — se `Content-Type` for `text/event-stream`. Consuma com `for await (const chunk of generator)`.
+- `object` — a resposta JSON parseada para requisições não-streaming. Se houver extratores configurados em `dataFetch()`, eles são aplicados sequencialmente sobre o JSON.
 
 **Erros:**
 - Lança erro se `dataFetch()` não foi chamado (nenhuma URL configurada).
@@ -154,8 +149,8 @@ type extractorType<TData extends object, TEvent = unknown> = {
 
 **Comportamento:**
 - `event` é **opcional** — ausente em respostas JSON não-streaming.
-- Se sua função retornar `{}` (vazio), nada é enfileirado para aquele chunk.
-- **Streaming:** múltiplos extratores rodam sequencialmente por linha. O resultado do **último** extrator determina o que é enfileirado. Valores se acumulam em `extractedLongDuration` via spread merge (`{ ...antigo, ...novo }`) e são entregues ao `onDone` quando o stream encerra.
+- Se sua função retornar `{}` (vazio), nada é enviado para aquele chunk.
+- **Streaming:** múltiplos extratores rodam sequencialmente por linha. O resultado do **último** extrator determina o que é yieldado. Valores se acumulam em `extractedLongDuration` via spread merge (`{ ...antigo, ...novo }`) e são entregues ao `onDone` quando o stream encerra.
 - **JSON (não-streaming):** todos os extratores são aplicados em sequência, e o resultado de cada um alimenta o `data` do próximo. O resultado final é retornado diretamente (não passa por `extractedLongDuration` nem `onDone`).
 
 ---
@@ -174,6 +169,11 @@ stream.dataFetch({
         "Authorization": "Bearer sk-seu-token"
     },
     timeOut: 30000,
+    body: {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Explique SSE" }],
+        stream: true
+    },
     extractor: [{
         fn: ({ data }) => {
             const content = data.choices?.[0]?.delta?.content;
@@ -182,19 +182,10 @@ stream.dataFetch({
     }]
 });
 
-const readableStream = await stream.fetchIA({
-    body: JSON.stringify({
-        model: "gpt-4o",
-        messages: [{ role: "user", content: "Explique SSE" }],
-        stream: true
-    })
-}) as ReadableStream<{ content: string }>;
+const generator = await stream.fetchIA();
 
-const reader = readableStream.getReader();
-while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    process.stdout.write(value.content);
+for await (const chunk of generator) {
+    process.stdout.write(chunk.content);
 }
 ```
 
@@ -207,13 +198,22 @@ stream.dataFetch({
         "Authorization": "Bearer gsk-seu-token",
         "Content-Type": "application/json"
     },
+    body: {
+        model: "llama-3.3-70b-versatile",
+        messages: [{ role: "user", content: "Olá" }],
+        stream: true
+    },
     extractor: [{
         fn: ({ data }) => ({
             content: data.choices?.[0]?.delta?.content ?? ""
         })
     }]
 });
-```
+
+const generator = await stream.fetchIA();
+for await (const chunk of generator) {
+    process.stdout.write(chunk.content);
+}
 
 ---
 
@@ -231,6 +231,12 @@ stream.dataFetch({
         "Content-Type": "application/json"
     },
     timeOut: 30000,
+    body: {
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "Olá" }],
+        stream: true
+    },
     extractor: [{
         fn: ({ data }) => {
             if (data.type === "content_block_delta") {
@@ -241,15 +247,10 @@ stream.dataFetch({
     }]
 });
 
-const readableStream = await stream.fetchIA({
-    body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1024,
-        messages: [{ role: "user", content: "Olá" }],
-        stream: true
-    })
-}) as ReadableStream<{ text: string }>;
-```
+const generator = await stream.fetchIA();
+for await (const chunk of generator) {
+    process.stdout.write(chunk.text);
+}
 
 ---
 
@@ -262,27 +263,29 @@ const controller = new AbortController();
 
 setTimeout(() => controller.abort(), 5000);
 
-const readableStream = await stream.fetchIA({
-    body: JSON.stringify({ model: "gpt-4o", messages: [...], stream: true }),
+const generator = await stream.fetchIA({
     signal: controller.signal
 });
-```
 
-**Via `reader.cancel()` (durante o stream):**
-
-```typescript
-const reader = readableStream.getReader();
-
-setTimeout(() => reader.cancel(), 5000); // cancela após 5 segundos
-
-while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    console.log(value);
+for await (const chunk of generator) {
+    console.log(chunk);
 }
 ```
 
-Quando o consumidor cancela, o `bodyReader` interno é cancelado e o timeout de inatividade é limpo automaticamente.
+**Via `break` no `for await` (durante o stream):**
+
+```typescript
+const generator = await stream.fetchIA();
+
+let count = 0;
+for await (const chunk of generator) {
+    console.log(chunk);
+    count++;
+    if (count >= 10) break; // cancela após 10 chunks
+}
+```
+
+Quando o consumidor cancela via `break` ou `AbortSignal`, o `bodyReader` interno é cancelado e o timeout de inatividade é limpo automaticamente via bloco `finally`.
 
 ---
 
@@ -294,6 +297,11 @@ Use `onDone` para capturar os dados acumulados quando o stream terminar — idea
 stream.dataFetch({
     url: "https://api.deepseek.com/v1/chat/completions",
     headers: { "Authorization": "Bearer sk-seu-token" },
+    body: {
+        model: "deepseek-chat",
+        messages: [{ role: "user", content: "Explique RAG" }],
+        stream: true
+    },
     extractor: [{
         fn: ({ data }) => ({
             content: data.choices?.[0]?.delta?.content ?? ""
@@ -305,19 +313,10 @@ stream.dataFetch({
     }
 });
 
-const readableStream = await stream.fetchIA({
-    body: JSON.stringify({
-        model: "deepseek-chat",
-        messages: [{ role: "user", content: "Explique RAG" }],
-        stream: true
-    })
-}) as ReadableStream<{ content: string }>;
+const generator = await stream.fetchIA();
 
-const reader = readableStream.getReader();
-while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    process.stdout.write(value.content);
+for await (const chunk of generator) {
+    process.stdout.write(chunk.content);
 }
 ```
 
@@ -333,6 +332,11 @@ Se a resposta não for `text/event-stream`, `fetchIA()` retorna um objeto JSON p
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
     headers: { "Authorization": "Bearer sk-..." },
+    body: {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Olá" }],
+        stream: false
+    },
     extractor: [{
         fn: ({ data }) => ({
             content: data.choices?.[0]?.message?.content ?? ""
@@ -340,13 +344,7 @@ stream.dataFetch({
     }]
 });
 
-const result = await stream.fetchIA({
-    body: JSON.stringify({
-        model: "gpt-4o",
-        messages: [{ role: "user", content: "Olá" }],
-        stream: false
-    })
-});
+const result = await stream.fetchIA();
 
 console.log(result.content); // extraído pelo extrator
 ```
@@ -365,20 +363,19 @@ import { createWriteStream } from "node:fs";
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
     headers: { "Authorization": "Bearer sk-..." },
+    body: {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Olá" }],
+        stream: true
+    },
     extractor: [{ fn: ({ data }) => ({ content: data.choices?.[0]?.delta?.content }) }]
 });
 
-const readableStream = await stream.fetchIA({
-    body: JSON.stringify({ model: "gpt-4o", messages: [...], stream: true }),
-    encodeBytes: true
-}) as ReadableStream<Uint8Array>;
+const generator = await stream.fetchIA({ encodeBytes: true });
 
 const fileStream = createWriteStream("response.jsonl");
-const reader = readableStream.getReader();
-while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    fileStream.write(value);
+for await (const chunk of generator) {
+    fileStream.write(chunk);
 }
 fileStream.end();
 ```
@@ -399,10 +396,8 @@ Bun.serve({
     port: 3000,
     async fetch(req) {
         const body = await req.json();
-        const aiStream = await stream.fetchIA({
-            body: JSON.stringify({ ...body, stream: true }),
-            encodeBytes: true
-        }) as ReadableStream<Uint8Array>;
+        const generator = await stream.fetchIA({ encodeBytes: true });
+        const aiStream = ReadableStream.from(generator);
 
         return new Response(aiStream, {
             headers: { "Content-Type": "text/event-stream" }
@@ -433,8 +428,8 @@ groqStream.dataFetch({
 });
 
 const [openaiResult, groqResult] = await Promise.all([
-    openaiStream.fetchIA({ body: JSON.stringify({ model: "gpt-4o", messages: [...], stream: true }) }),
-    groqStream.fetchIA({ body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [...], stream: true }) })
+    openaiStream.fetchIA(),
+    groqStream.fetchIA()
 ]);
 ```
 
@@ -448,6 +443,7 @@ const [openaiResult, groqResult] = await Promise.all([
 interface dataFetchType<TData extends object, TEvent = unknown> {
     url: string;
     headers?: Record<string, string>;
+    body?: Record<string, unknown>;
     timeOut?: number;
     extractor?: extractorType<TData, TEvent>[];
     onDone?: (finalData: Record<string, unknown>) => void;
@@ -457,8 +453,6 @@ interface FetchOptions<TData extends object, TEvent = unknown> {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
-    body?: string;
-    extractor?: extractorType<TData, TEvent>[];
 }
 
 interface extractorType<TData extends object, TEvent = unknown> {
@@ -476,7 +470,7 @@ Chunks de rede podem chegar em tamanhos arbitrários, dividindo linhas SSE no me
 
 ### Timeout
 
-O timeout é **baseado em inatividade** — ele reseta a cada chunk recebido. Não há limite de duração total. Se nenhum dado chegar durante os `timeOut` milissegundos configurados, o stream é abortado via `controller.error()` e `bodyReader.cancel()`.
+O timeout é **baseado em inatividade** — ele reseta a cada chunk recebido. Não há limite de duração total. Se nenhum dado chegar durante os `timeOut` milissegundos configurados, o stream é abortado via `throw` e `bodyReader.cancel()`.
 
 ### Estados
 
@@ -484,16 +478,16 @@ Dois estados internos rastreiam dados durante o streaming:
 
 | Estado | Escopo | Propósito |
 |--------|--------|-----------|
-| `state` | Uma linha SSE | Mantém `data`, `event` e `extracted` parseados para o chunk atual. Limpo após enfileirar. |
+| `state` | Uma linha SSE | Mantém `data`, `event` e `extracted` parseados para o chunk atual. Limpo após cada yield. |
 | `stateLongDuration` | Stream inteiro | Acumula `data` (mais recente) e `extractedLongDuration` (merge de todos os chunks). Entregue ao `onDone`. |
 
 ### `[DONE]`
 
-O protocolo SSE sinaliza fim do stream com `data: [DONE]`. Quando detectado, o controller é fechado, `onDone` é chamado com `extractedLongDuration` acumulado e o loop de leitura encerra.
+O protocolo SSE sinaliza fim do stream com `data: [DONE]`. Quando detectado, `onDone` é chamado com `extractedLongDuration` acumulado e o generator encerra via `return`.
 
 ### Cancelamento
 
-Quando o consumidor chama `reader.cancel()`, o callback de cancelamento do `ReadableStream` limpa o timer de inatividade e cancela o `bodyReader` interno. Nenhum recurso vaza.
+Quando o consumidor cancela (via `break` no `for await` ou `AbortSignal`), o bloco `finally` interno limpa o timer de inatividade e libera o lock do `bodyReader`. Nenhum recurso vaza.
 
 ---
 
@@ -540,6 +534,11 @@ const stream = new StreamHttpEvent();
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
     headers: { "Authorization": "Bearer sk-your-token" },
+    body: {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Hello!" }],
+        stream: true
+    },
     extractor: [{
         fn: ({ data }) => ({
             content: data.choices?.[0]?.delta?.content ?? ""
@@ -548,20 +547,11 @@ stream.dataFetch({
 });
 
 // 2. Request
-const readableStream = await stream.fetchIA({
-    body: JSON.stringify({
-        model: "gpt-4o",
-        messages: [{ role: "user", content: "Hello!" }],
-        stream: true
-    })
-}) as ReadableStream<{ content: string }>;
+const generator = await stream.fetchIA();
 
 // 3. Read
-const reader = readableStream.getReader();
-while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    process.stdout.write(value.content);
+for await (const chunk of generator) {
+    process.stdout.write(chunk.content);
 }
 ```
 
@@ -579,13 +569,13 @@ pnpm add @felipe-lib/stream-http-event
 
 ## Core Concepts
 
-**What problem this solves.** AI providers return streaming responses as raw SSE bytes. Parsing those manually means dealing with buffering, line splitting, `[DONE]` detection, and per-provider response shapes. This library handles all of that and gives you a clean `ReadableStream`.
+**What problem this solves.** AI providers return streaming responses as raw SSE bytes. Parsing those manually means dealing with buffering, line splitting, `[DONE]` detection, and per-provider response shapes. This library handles all of that and gives you a clean `AsyncGenerator`.
 
 **Two-step pattern.**
-1. `dataFetch()` — configure the instance (URL, headers, timeout, extractors, `onDone` callback). Call once.
-2. `fetchIA()` — execute the request. Returns a `ReadableStream` (if the response is `text/event-stream`) or a parsed JSON object (fallback for non-streaming).
+1. `dataFetch()` — configure the instance (URL, headers, body, timeout, extractors, `onDone` callback). Call once.
+2. `fetchIA()` — execute the request. Returns an `AsyncGenerator` (if the response is `text/event-stream`) or a parsed JSON object (fallback for non-streaming).
 
-**Extractors** are functions `({ data, event? }) => Record<string, unknown>` that map data into the shape you want. In streaming mode, each SSE chunk is processed. In JSON fallback (non-streaming), extractors are applied sequentially over the parsed JSON (no `event`). Without extractors, nothing is enqueued to the stream. With extractors, each chunk becomes whatever your function returns.
+**Extractors** are functions `({ data, event? }) => Record<string, unknown>` that map data into the shape you want. In streaming mode, each SSE chunk is processed. In JSON fallback (non-streaming), extractors are applied sequentially over the parsed JSON (no `event`). Without extractors, nothing is yielded to the generator. With extractors, each chunk becomes whatever your function returns.
 
 ---
 
@@ -603,31 +593,30 @@ stream.dataFetch(config: dataFetchType): void
 |-----------|------|----------|-------------|
 | `url` | `string` | Yes | AI provider endpoint |
 | `headers` | `Record<string, string>` | No | HTTP headers (Authorization, Content-Type, etc.) |
+| `body` | `Record<string, unknown>` | No | Request body (serialized as JSON). Configure here instead of passing via `fetchIA()`. |
 | `timeOut` | `number` | No | Inactivity timeout in milliseconds. Resets on each chunk. No total-time limit. |
-| `extractor` | `extractorType[]` | No | Default extractors for every `fetchIA()` call. Overridable per call. |
+| `extractor` | `extractorType[]` | No | Default extractors for every `fetchIA()` call. |
 | `onDone` | `(finalData: Record<string, unknown>) => void` | No | Callback fired when the stream ends. Receives the full accumulated response (merge of all extracted chunks). Useful for saving to a database. |
 
 ---
 
 ### `fetchIA()`
 
-Executes the HTTP request and returns either a `ReadableStream` or a parsed JSON object.
+Executes the HTTP request and returns either an `AsyncGenerator` or a parsed JSON object.
 
 ```typescript
-stream.fetchIA(options: FetchOptions): Promise<ReadableStream | object>
+stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | object>
 ```
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `body` | `string` | No | Request body (typically `JSON.stringify({...})`) |
 | `method` | `string` | No | HTTP method. Default: `"POST"` |
 | `signal` | `AbortSignal` | No | AbortController signal for request cancellation |
-| `encodeBytes` | `boolean` | No | If `true`, enqueues `Uint8Array`. If `false`/`undefined`, enqueues plain objects. |
-| `extractor` | `extractorType[]` | No | Per-call extractors. Overrides extractors set in `dataFetch()`. |
+| `encodeBytes` | `boolean` | No | If `true`, yielded chunks are `Uint8Array`. If `false`/`undefined`, chunks are plain objects. |
 
 **Returns:**
-- `ReadableStream<Record<string, unknown> | Uint8Array>` — if `Content-Type` is `text/event-stream`
-- `object` — the parsed JSON response for non-streaming requests. If extractors are configured (instance-level or per-call), they are applied sequentially over the JSON.
+- `AsyncGenerator<Record<string, unknown> | Uint8Array, void, unknown>` — if `Content-Type` is `text/event-stream`. Consume with `for await (const chunk of generator)`.
+- `object` — the parsed JSON response for non-streaming requests. If extractors are configured in `dataFetch()`, they are applied sequentially over the JSON.
 
 **Errors:**
 - Throws if `dataFetch()` was not called (no URL configured).
@@ -648,8 +637,8 @@ type extractorType<TData extends object, TEvent = unknown> = {
 
 **Behavior:**
 - `event` is **optional** — absent in non-streaming JSON responses.
-- If your function returns `{}` (empty), nothing is enqueued for that chunk.
-- **Streaming:** multiple extractors run sequentially per line. The **last** extractor's result determines what gets enqueued. Values accumulate in `extractedLongDuration` via spread merge (`{ ...old, ...new }`) and are delivered to `onDone` when the stream ends.
+- If your function returns `{}` (empty), nothing is yielded for that chunk.
+- **Streaming:** multiple extractors run sequentially per line. The **last** extractor's result determines what gets yielded. Values accumulate in `extractedLongDuration` via spread merge (`{ ...old, ...new }`) and are delivered to `onDone` when the stream ends.
 - **JSON (non-streaming):** all extractors are applied in sequence, each result feeding the next one's `data`. The final result is returned directly (does not go through `extractedLongDuration` or `onDone`).
 
 ---
@@ -668,6 +657,11 @@ stream.dataFetch({
         "Authorization": "Bearer sk-your-token"
     },
     timeOut: 30000,
+    body: {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Explain SSE" }],
+        stream: true
+    },
     extractor: [{
         fn: ({ data }) => {
             const content = data.choices?.[0]?.delta?.content;
@@ -676,19 +670,10 @@ stream.dataFetch({
     }]
 });
 
-const readableStream = await stream.fetchIA({
-    body: JSON.stringify({
-        model: "gpt-4o",
-        messages: [{ role: "user", content: "Explain SSE" }],
-        stream: true
-    })
-}) as ReadableStream<{ content: string }>;
+const generator = await stream.fetchIA();
 
-const reader = readableStream.getReader();
-while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    process.stdout.write(value.content);
+for await (const chunk of generator) {
+    process.stdout.write(chunk.content);
 }
 ```
 
@@ -701,13 +686,22 @@ stream.dataFetch({
         "Authorization": "Bearer gsk-your-token",
         "Content-Type": "application/json"
     },
+    body: {
+        model: "llama-3.3-70b-versatile",
+        messages: [{ role: "user", content: "Hello" }],
+        stream: true
+    },
     extractor: [{
         fn: ({ data }) => ({
             content: data.choices?.[0]?.delta?.content ?? ""
         })
     }]
 });
-```
+
+const generator = await stream.fetchIA();
+for await (const chunk of generator) {
+    process.stdout.write(chunk.content);
+}
 
 ---
 
@@ -725,6 +719,12 @@ stream.dataFetch({
         "Content-Type": "application/json"
     },
     timeOut: 30000,
+    body: {
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1024,
+        messages: [{ role: "user", content: "Hello" }],
+        stream: true
+    },
     extractor: [{
         fn: ({ data }) => {
             if (data.type === "content_block_delta") {
@@ -735,15 +735,10 @@ stream.dataFetch({
     }]
 });
 
-const readableStream = await stream.fetchIA({
-    body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1024,
-        messages: [{ role: "user", content: "Hello" }],
-        stream: true
-    })
-}) as ReadableStream<{ text: string }>;
-```
+const generator = await stream.fetchIA();
+for await (const chunk of generator) {
+    process.stdout.write(chunk.text);
+}
 
 ---
 
@@ -756,27 +751,29 @@ const controller = new AbortController();
 
 setTimeout(() => controller.abort(), 5000);
 
-const readableStream = await stream.fetchIA({
-    body: JSON.stringify({ model: "gpt-4o", messages: [...], stream: true }),
+const generator = await stream.fetchIA({
     signal: controller.signal
 });
-```
 
-**Via `reader.cancel()` (mid-stream):**
-
-```typescript
-const reader = readableStream.getReader();
-
-setTimeout(() => reader.cancel(), 5000); // cancels after 5 seconds
-
-while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    console.log(value);
+for await (const chunk of generator) {
+    console.log(chunk);
 }
 ```
 
-When the consumer cancels, the internal `bodyReader` is cancelled and the inactivity timeout is cleared automatically.
+**Via `break` in `for await` (mid-stream):**
+
+```typescript
+const generator = await stream.fetchIA();
+
+let count = 0;
+for await (const chunk of generator) {
+    console.log(chunk);
+    count++;
+    if (count >= 10) break; // cancels after 10 chunks
+}
+```
+
+When the consumer cancels via `break` or `AbortSignal`, the internal `bodyReader` is cancelled and the inactivity timeout is cleared automatically via the `finally` block.
 
 ---
 
@@ -788,6 +785,11 @@ Use `onDone` to capture the accumulated data when the stream finishes — ideal 
 stream.dataFetch({
     url: "https://api.deepseek.com/v1/chat/completions",
     headers: { "Authorization": "Bearer sk-your-token" },
+    body: {
+        model: "deepseek-chat",
+        messages: [{ role: "user", content: "Explain RAG" }],
+        stream: true
+    },
     extractor: [{
         fn: ({ data }) => ({
             content: data.choices?.[0]?.delta?.content ?? ""
@@ -799,19 +801,10 @@ stream.dataFetch({
     }
 });
 
-const readableStream = await stream.fetchIA({
-    body: JSON.stringify({
-        model: "deepseek-chat",
-        messages: [{ role: "user", content: "Explain RAG" }],
-        stream: true
-    })
-}) as ReadableStream<{ content: string }>;
+const generator = await stream.fetchIA();
 
-const reader = readableStream.getReader();
-while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    process.stdout.write(value.content);
+for await (const chunk of generator) {
+    process.stdout.write(chunk.content);
 }
 ```
 
@@ -827,6 +820,11 @@ If the response is not `text/event-stream`, `fetchIA()` returns a parsed JSON ob
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
     headers: { "Authorization": "Bearer sk-..." },
+    body: {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Hello" }],
+        stream: false
+    },
     extractor: [{
         fn: ({ data }) => ({
             content: data.choices?.[0]?.message?.content ?? ""
@@ -834,13 +832,7 @@ stream.dataFetch({
     }]
 });
 
-const result = await stream.fetchIA({
-    body: JSON.stringify({
-        model: "gpt-4o",
-        messages: [{ role: "user", content: "Hello" }],
-        stream: false
-    })
-});
+const result = await stream.fetchIA();
 
 console.log(result.content); // extracted by the extractor
 ```
@@ -859,20 +851,19 @@ import { createWriteStream } from "node:fs";
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
     headers: { "Authorization": "Bearer sk-..." },
+    body: {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Hello" }],
+        stream: true
+    },
     extractor: [{ fn: ({ data }) => ({ content: data.choices?.[0]?.delta?.content }) }]
 });
 
-const readableStream = await stream.fetchIA({
-    body: JSON.stringify({ model: "gpt-4o", messages: [...], stream: true }),
-    encodeBytes: true
-}) as ReadableStream<Uint8Array>;
+const generator = await stream.fetchIA({ encodeBytes: true });
 
 const fileStream = createWriteStream("response.jsonl");
-const reader = readableStream.getReader();
-while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    fileStream.write(value);
+for await (const chunk of generator) {
+    fileStream.write(chunk);
 }
 fileStream.end();
 ```
@@ -893,10 +884,8 @@ Bun.serve({
     port: 3000,
     async fetch(req) {
         const body = await req.json();
-        const aiStream = await stream.fetchIA({
-            body: JSON.stringify({ ...body, stream: true }),
-            encodeBytes: true
-        }) as ReadableStream<Uint8Array>;
+        const generator = await stream.fetchIA({ encodeBytes: true });
+        const aiStream = ReadableStream.from(generator);
 
         return new Response(aiStream, {
             headers: { "Content-Type": "text/event-stream" }
@@ -927,8 +916,8 @@ groqStream.dataFetch({
 });
 
 const [openaiResult, groqResult] = await Promise.all([
-    openaiStream.fetchIA({ body: JSON.stringify({ model: "gpt-4o", messages: [...], stream: true }) }),
-    groqStream.fetchIA({ body: JSON.stringify({ model: "llama-3.3-70b-versatile", messages: [...], stream: true }) })
+    openaiStream.fetchIA(),
+    groqStream.fetchIA()
 ]);
 ```
 
@@ -942,6 +931,7 @@ const [openaiResult, groqResult] = await Promise.all([
 interface dataFetchType<TData extends object, TEvent = unknown> {
     url: string;
     headers?: Record<string, string>;
+    body?: Record<string, unknown>;
     timeOut?: number;
     extractor?: extractorType<TData, TEvent>[];
     onDone?: (finalData: Record<string, unknown>) => void;
@@ -951,8 +941,6 @@ interface FetchOptions<TData extends object, TEvent = unknown> {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
-    body?: string;
-    extractor?: extractorType<TData, TEvent>[];
 }
 
 interface extractorType<TData extends object, TEvent = unknown> {
@@ -970,7 +958,7 @@ Network chunks may arrive in arbitrary sizes, splitting SSE lines mid-way. The b
 
 ### Timeout
 
-Timeout is **inactivity-based** — it resets on every received chunk. There is no total-duration limit. If no data arrives for the configured `timeOut` milliseconds, the stream is aborted via `controller.error()` and `bodyReader.cancel()`.
+Timeout is **inactivity-based** — it resets on every received chunk. There is no total-duration limit. If no data arrives for the configured `timeOut` milliseconds, the stream is aborted via `throw` and `bodyReader.cancel()`.
 
 ### States
 
@@ -978,16 +966,16 @@ Two internal states track data during streaming:
 
 | State | Scope | Purpose |
 |-------|-------|---------|
-| `state` | One SSE line | Holds the parsed `data`, `event`, and `extracted` for the current chunk. Cleared after enqueue. |
+| `state` | One SSE line | Holds the parsed `data`, `event`, and `extracted` for the current chunk. Cleared after each yield. |
 | `stateLongDuration` | Entire stream | Accumulates `data` (latest) and `extractedLongDuration` (merged across all chunks). Delivered to `onDone`. |
 
 ### `[DONE]`
 
-The SSE protocol signals end-of-stream with `data: [DONE]`. When detected, the controller is closed, `onDone` is called with the accumulated `extractedLongDuration`, and the read loop exits.
+The SSE protocol signals end-of-stream with `data: [DONE]`. When detected, `onDone` is called with the accumulated `extractedLongDuration`, and the generator exits via `return`.
 
 ### Cancellation
 
-When the consumer calls `reader.cancel()`, the `ReadableStream` cancel callback cleans up the inactivity timer and cancels the internal `bodyReader`. No resources leak.
+When the consumer cancels (via `break` in `for await` or `AbortSignal`), the internal `finally` block clears the inactivity timer and releases the `bodyReader` lock. No resources leak.
 
 ---
 

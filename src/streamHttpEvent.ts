@@ -14,10 +14,12 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
     private timeOut?: number;
     private extractor?: extractorType<TData, TEvent>[];
     private onDone?: (finalData: Record<string, unknown>) => void;
+    private body?: Record<string, unknown>;
 
     public dataFetch({
         url,
         headers,
+        body,
         timeOut,
         extractor,
         onDone,
@@ -27,6 +29,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
         this.timeOut = timeOut;
         this.extractor = extractor;
         this.onDone = onDone;
+        this.body = body;
     }
 
     private stateLocal() {
@@ -78,7 +81,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
         };
     }
 
-    private timeout({ controller, timeOutId, bodyReader }: timeoutType) {
+    private timeout({ timeOutId, bodyReader }: timeoutType) {
         if (timeOutId.getTime()) {
             timeOutId.clearTime();
         }
@@ -93,17 +96,6 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                     await bodyReader.cancel();
                 } catch (error) {
                     console.error(error);
-                }
-                try {
-                    controller.error(
-                        new Error(
-                            `Ops, Seu provedor de IA demorou mais de ${this.timeOut}ms`,
-                        ),
-                    );
-                } catch (error) {
-                    console.error(
-                        `Ops, erro ao enviar error pelo controller de timeout: ${error}`,
-                    );
                 }
             }, this.timeOut),
         });
@@ -146,6 +138,8 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                             event,
                         }),
                     });
+                    state.clearStateByKey("data");
+                    state.clearStateByKey("event");
                 }
             }
         }
@@ -153,10 +147,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
 
     private serialize({
         buffer,
-        controller,
-        encoder,
         extractor,
-        encodeBytes,
         state,
         stateLongDuration,
     }: serializeType<TData, TEvent>) {
@@ -167,12 +158,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
             const trimmed = line.trim();
 
             if (trimmed === "data: [DONE]") {
-                try {
-                    controller.close();
-                } catch (error) {
-                    throw new Error(`Erro ao fechar o controller: ${error}`);
-                }
-                return true;
+                return trimmed;
             }
 
             if (trimmed.startsWith("data:")) {
@@ -210,27 +196,13 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                         ...extracted,
                     },
                 });
-
-                try {
-                    if (encodeBytes) {
-                        controller.enqueue(
-                            encoder.encode(JSON.stringify(extracted)),
-                        );
-                    } else {
-                        controller.enqueue(extracted);
-                    }
-                } catch (e) {
-                    throw new Error(`Falha no envio de dados: ${e}`);
-                }
-
-                state.clearState();
             }
         }
 
         return false;
     }
 
-    private streamIA({
+    private async *streamIA({
         body,
         encodeBytes,
         extractor,
@@ -243,91 +215,59 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
         const decoder: TextDecoder = new TextDecoder();
         const encoder: TextEncoder = new TextEncoder();
 
-        return new ReadableStream({
-            start: async (controller) => {
-                this.timeout({ controller, timeOutId, bodyReader });
+        try {
+            while (true) {
+                const { done, value } = await bodyReader.read();
 
-                try {
-                    while (true) {
-                        const { value, done } = await bodyReader.read();
-
-                        if (done) {
-                            timeOutId.clearTime();
-                            try {
-                                controller.close();
-                            } catch (error) {
-                                throw new Error(
-                                    `Falha ao fechar o controller: ${error}`,
-                                );
-                            }
-                            break;
-                        }
-
-                        if (!value) {
-                            throw new Error(
-                                "Não foi encontrado valor codificado na stream",
-                            );
-                        }
-
-                        buffer.add(
-                            decoder.decode(value, {
-                                stream: true,
-                            }),
-                        );
-
-                        this.timeout({ controller, timeOutId, bodyReader });
-
-                        const isDone = this.serialize({
-                            buffer,
-                            controller,
-                            encoder,
-                            extractor,
-                            encodeBytes,
-                            state,
-                            stateLongDuration,
-                        });
-                        if (isDone) {
-                            const finalData = stateLongDuration.getStateOne(
-                                "extractedLongDuration",
-                            ) as Record<string, unknown> | undefined;
-                            this.onDone?.(finalData ?? {});
-                            timeOutId.clearTime();
-                            break;
-                        }
-                    }
-                } catch (error) {
-                    timeOutId.clearTime();
-                    try {
-                        controller.error(error);
-                    } catch (error) {
-                        throw new Error(
-                            `Falha ao enviar error ao controller: ${error}`,
-                        );
-                    }
-                } finally {
-                    try {
-                        await bodyReader.cancel();
-                        bodyReader.releaseLock();
-                    } catch (error) {
-                        throw new Error(
-                            `Falha ao cancelar ou liberar o lock do bodyReader: ${error}`,
-                        );
-                    }
+                if (done) {
+                    break;
                 }
-            },
-            cancel() {
-                timeOutId.clearTime();
-                bodyReader.cancel().catch(() => {});
-            },
-        });
+
+                buffer.add(decoder.decode(value, { stream: true }));
+
+                const serialized = this.serialize({
+                    extractor: extractor ?? this.extractor,
+                    buffer,
+                    state,
+                    stateLongDuration,
+                });
+
+                this.timeout({ timeOutId, bodyReader });
+
+                if (serialized === "data: [DONE]") {
+                    const extractedLongDuration = state.getStateOne(
+                        "extractedLongDuration",
+                    ) as Record<string, unknown>;
+                    this.onDone?.(extractedLongDuration);
+
+                    return;
+                }
+
+                const extracted = state.getStateOne("extracted");
+                if (!extracted) continue;
+
+                if (encodeBytes) {
+                    yield encoder.encode(JSON.stringify(extracted));
+                } else {
+                    yield extracted;
+                }
+
+                state.clearStateByKey("extracted");
+                state.clearStateByKey("data");
+                state.clearStateByKey("event");
+            }
+        } catch (e: unknown) {
+            throw e;
+        } finally {
+            timeOutId.clearTime();
+            bodyReader.releaseLock();
+        }
     }
 
     public async fetchIA({
         encodeBytes,
         signal,
         method,
-        body,
-        extractor,
     }: FetchOptions<TData, TEvent>) {
         if (!this.url) {
             throw new Error("dataFetch() precisa da url do seu provedor de IA");
@@ -336,7 +276,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
         const fetcher = await fetch(this.url, {
             method: method ?? "POST",
             headers: this.headers,
-            body: body ?? undefined,
+            body: this.body ? JSON.stringify(this.body) : undefined,
             signal: signal,
         });
 
@@ -354,10 +294,10 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
             return this.streamIA({
                 body: fetcher.body,
                 encodeBytes,
-                extractor: extractor ?? this.extractor,
-            }) as ReadableStream<Record<string, unknown> | Uint8Array>;
+                extractor: this.extractor ?? [],
+            });
         } else {
-            const extractors = extractor ?? this.extractor;
+            const extractors = this.extractor;
             let data = await fetcher.json();
 
             if (extractors) {
