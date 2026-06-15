@@ -265,6 +265,9 @@ const generator = await stream.fetchIA();
 for await (const chunk of generator) {
     process.stdout.write(chunk.content);
 }
+```
+
+> **Dica:** O Groq também pode usar os [builders do DeepSeek](#builders-por-provedor-deepseek) — o formato do body é o mesmo (OpenAI-compatível). Só troque a URL.
 
 ---
 
@@ -305,9 +308,11 @@ for await (const chunk of generator) {
 
 ---
 
-### Builders por Provedor (DeepSeek)
+### Builders por Provedor (DeepSeek / OpenAI-compatível)
 
-Use builders para montar headers e body com tipos exatos e autocompletar — sem decorar chaves nem digitar manualmente:
+Use builders para montar headers e body com tipos exatos e autocompletar — sem decorar chaves nem digitar manualmente. **Funciona com qualquer provedor que siga o padrão OpenAI** (Groq, Together AI, Fireworks, etc.), bastando trocar a URL:
+
+> **Compatível com:** Groq, Together AI, Fireworks, Perplexity, xAI, e qualquer API que use o formato `{ messages, model, stream, temperature, ... }`. Apenas ajuste a URL no `dataFetch()`.
 
 ```typescript
 import {
@@ -929,6 +934,9 @@ const generator = await stream.fetchIA();
 for await (const chunk of generator) {
     process.stdout.write(chunk.content);
 }
+```
+
+> **Tip:** Groq can also use the [DeepSeek builders](#per-provider-builders-deepseek) — the body format is the same (OpenAI-compatible). Just swap the URL.
 
 ---
 
@@ -969,9 +977,11 @@ for await (const chunk of generator) {
 
 ---
 
-### Per-Provider Builders (DeepSeek)
+### Per-Provider Builders (DeepSeek / OpenAI-compatible)
 
-Use builders to construct headers and body with exact types and autocomplete — no memorizing keys or typing manually:
+Use builders to construct headers and body with exact types and autocomplete — no memorizing keys or typing manually. **Works with any provider that follows the OpenAI format** (Groq, Together AI, Fireworks, etc.), just swap the URL:
+
+> **Compatible with:** Groq, Together AI, Fireworks, Perplexity, xAI, and any API using the `{ messages, model, stream, temperature, ... }` shape. Just adjust the URL in `dataFetch()`.
 
 ```typescript
 import {
