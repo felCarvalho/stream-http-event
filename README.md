@@ -17,19 +17,19 @@ Funciona em qualquer runtime com `fetch`, `AsyncGenerator`, `TextDecoder` e `Tex
 - [Instalação](#instalação)
 - [Conceitos Fundamentais](#conceitos-fundamentais)
 - [Referência da API](#referência-da-api)
-  - [`dataFetch()`](#datafetch)
-  - [`fetchIA()`](#fetchia)
-  - [`extractorType`](#extractortype)
+    - [`dataFetch()`](#datafetch)
+    - [`fetchIA()`](#fetchia)
+    - [`extractorType`](#extractortype)
 - [Guias](#guias)
-  - [Streaming Básico (OpenAI / Groq)](#streaming-básico-openai--groq)
+    - [Streaming Básico (OpenAI / Groq)](#streaming-básico-openai--groq)
 - [Extratores por Provedor (Anthropic)](#extratores-por-provedor-anthropic)
 - [Builders por Provedor (DeepSeek)](#builders-por-provedor-deepseek)
 - [Cancelamento](#cancelamento)
-  - [Salvando a Resposta Completa](#salvando-a-resposta-completa)
-  - [Fallback Não-Streaming](#fallback-não-streaming)
-  - [Pipe para Arquivo](#pipe-para-arquivo)
-  - [Servidor Proxy HTTP](#servidor-proxy-http)
-  - [Múltiplos Provedores em Paralelo](#múltiplos-provedores-em-paralelo)
+    - [Salvando a Resposta Completa](#salvando-a-resposta-completa)
+    - [Fallback Não-Streaming](#fallback-não-streaming)
+    - [Pipe para Arquivo](#pipe-para-arquivo)
+    - [Servidor Proxy HTTP](#servidor-proxy-http)
+    - [Múltiplos Provedores em Paralelo](#múltiplos-provedores-em-paralelo)
 - [Tipos TypeScript](#tipos-typescript)
 - [Funcionamento Interno](#funcionamento-interno)
 - [Licença](#licença)
@@ -46,23 +46,61 @@ const stream = new StreamHttpEvent();
 // 1. Configurar
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: { "Authorization": "Bearer sk-seu-token" },
+    headers: { Authorization: "Bearer sk-seu-token" },
     body: {
         model: "gpt-4o",
         messages: [{ role: "user", content: "Olá!" }],
-        stream: true
+        stream: true,
     },
-    extractor: [{
-        fn: ({ data }) => ({
-            content: data.choices?.[0]?.delta?.content ?? ""
-        })
-    }]
+    extractor: [
+        {
+            fn: ({ data }) => ({
+                content: data.choices?.[0]?.delta?.content ?? "",
+            }),
+        },
+    ],
 });
 
 // 2. Requisitar
 const generator = await stream.fetchIA();
 
 // 3. Ler
+for await (const chunk of generator) {
+    process.stdout.write(chunk.content);
+}
+```
+
+**Com builder tipado (DeepSeek):**
+
+```typescript
+import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
+import {
+    DeepSeekHeadersBuilder,
+    DeepSeekBodyBuilder,
+    DeepSeekMessageBuilder,
+} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
+
+const stream = new StreamHttpEvent();
+
+stream.dataFetch({
+    url: "https://api.deepseek.com/chat/completions",
+    headers: new DeepSeekHeadersBuilder().apiKey("sk-seu-token").build(),
+    body: new DeepSeekBodyBuilder()
+        .model("deepseek-v4-pro")
+        .messages([new DeepSeekMessageBuilder().content("Olá!").build()])
+        .stream(true)
+        .build(),
+    extractor: [
+        {
+            fn: ({ data }) => ({
+                content: data.choices?.[0]?.delta?.content ?? "",
+            }),
+        },
+    ],
+});
+
+const generator = await stream.fetchIA();
+
 for await (const chunk of generator) {
     process.stdout.write(chunk.content);
 }
@@ -85,6 +123,7 @@ pnpm add @felipe-lib/stream-http-event
 **Qual problema isso resolve.** Provedores de IA retornam respostas em streaming como bytes SSE brutos. Fazer o parsing disso manualmente significa lidar com bufferização, divisão de linhas, detecção de `[DONE]` e formatos de resposta específicos de cada provedor. Esta biblioteca cuida de tudo isso e te entrega um `AsyncGenerator` limpo.
 
 **Padrão de dois passos.**
+
 1. `dataFetch()` — configura a instância (URL, headers, body, timeout, extratores, callback `onDone`). Chame uma vez.
 2. `fetchIA()` — executa a requisição. Retorna um `AsyncGenerator` (se a resposta for `text/event-stream`) ou um objeto JSON parseado (fallback para não-streaming).
 
@@ -102,14 +141,14 @@ Configura a instância. Deve ser chamado antes de `fetchIA()`.
 stream.dataFetch(config: dataFetchType): void
 ```
 
-| Parâmetro | Tipo | Obrigatório | Descrição |
-|-----------|------|-------------|-----------|
-| `url` | `string` | Sim | Endpoint do provedor de IA |
-| `headers` | `Record<string, string>` ou tipo customizado via Builder | Não | Headers HTTP (Authorization, Content-Type, etc.). Pode ser tipado automaticamente ao usar um builder de provedor. |
-| `body` | `Record<string, unknown>` ou tipo customizado via Builder | Não | Corpo da requisição (serializado como JSON). Configure aqui ou use um builder de provedor para autocompletar todos os campos. |
-| `timeOut` | `number` | Não | Timeout de inatividade em milissegundos. Reseta a cada chunk. Sem limite de tempo total. |
-| `extractor` | `extractorType[]` | Não | Extratores padrão para todas as chamadas `fetchIA()`. |
-| `onDone` | `(finalData: Record<string, unknown>) => void` | Não | Callback disparado quando o stream termina. Recebe a resposta completa acumulada (merge de todos os chunks extraídos). Útil para salvar em banco de dados. |
+| Parâmetro   | Tipo                                                      | Obrigatório | Descrição                                                                                                                                                  |
+| ----------- | --------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`       | `string`                                                  | Sim         | Endpoint do provedor de IA                                                                                                                                 |
+| `headers`   | `Record<string, string>` ou tipo customizado via Builder  | Não         | Headers HTTP (Authorization, Content-Type, etc.). Pode ser tipado automaticamente ao usar um builder de provedor.                                          |
+| `body`      | `Record<string, unknown>` ou tipo customizado via Builder | Não         | Corpo da requisição (serializado como JSON). Configure aqui ou use um builder de provedor para autocompletar todos os campos.                              |
+| `timeOut`   | `number`                                                  | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk. Sem limite de tempo total.                                                                   |
+| `extractor` | `extractorType[]`                                         | Não         | Extratores padrão para todas as chamadas `fetchIA()`.                                                                                                      |
+| `onDone`    | `(finalData: Record<string, unknown>) => void`            | Não         | Callback disparado quando o stream termina. Recebe a resposta completa acumulada (merge de todos os chunks extraídos). Útil para salvar em banco de dados. |
 
 ---
 
@@ -121,17 +160,19 @@ Executa a requisição HTTP e retorna um `AsyncGenerator` ou um objeto JSON pars
 stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | object>
 ```
 
-| Parâmetro | Tipo | Obrigatório | Descrição |
-|-----------|------|-------------|-----------|
-| `method` | `string` | Não | Método HTTP. Padrão: `"POST"` |
-| `signal` | `AbortSignal` | Não | Sinal do AbortController para cancelamento da requisição |
-| `encodeBytes` | `boolean` | Não | Se `true`, os chunks yieldados são `Uint8Array`. Se `false`/`undefined`, os chunks são objetos planos. |
+| Parâmetro     | Tipo          | Obrigatório | Descrição                                                                                              |
+| ------------- | ------------- | ----------- | ------------------------------------------------------------------------------------------------------ |
+| `method`      | `string`      | Não         | Método HTTP. Padrão: `"POST"`                                                                          |
+| `signal`      | `AbortSignal` | Não         | Sinal do AbortController para cancelamento da requisição                                               |
+| `encodeBytes` | `boolean`     | Não         | Se `true`, os chunks yieldados são `Uint8Array`. Se `false`/`undefined`, os chunks são objetos planos. |
 
 **Retorna:**
+
 - `AsyncGenerator<Record<string, unknown> | Uint8Array, void, unknown>` — se `Content-Type` for `text/event-stream`. Consuma com `for await (const chunk of generator)`.
 - `object` — a resposta JSON parseada para requisições não-streaming. Se houver extratores configurados em `dataFetch()`, eles são aplicados sequencialmente sobre o JSON.
 
 **Erros:**
+
 - Lança erro se `dataFetch()` não foi chamado (nenhuma URL configurada).
 - Lança erro se a resposta HTTP não for OK (`!fetcher.ok`).
 - Lança erro se a resposta não tiver corpo.
@@ -144,11 +185,18 @@ Cada função extratora recebe os campos `data` e `event` (opcional) do chunk at
 
 ```typescript
 type extractorType<TData extends object, TEvent = unknown> = {
-    fn: ({ data, event }: { data: TData; event?: TEvent }) => Record<string, unknown>;
+    fn: ({
+        data,
+        event,
+    }: {
+        data: TData;
+        event?: TEvent;
+    }) => Record<string, unknown>;
 };
 ```
 
 **Comportamento:**
+
 - `event` é **opcional** — ausente em respostas JSON não-streaming.
 - Se sua função retornar `{}` (vazio), nada é enviado para aquele chunk.
 - **Streaming:** múltiplos extratores rodam sequencialmente por linha. O resultado do **último** extrator determina o que é yieldado. Valores se acumulam em `extractedLongDuration` via spread merge (`{ ...antigo, ...novo }`) e são entregues ao `onDone` quando o stream encerra.
@@ -167,20 +215,22 @@ stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
     headers: {
         "Content-Type": "application/json",
-        "Authorization": "Bearer sk-seu-token"
+        Authorization: "Bearer sk-seu-token",
     },
     timeOut: 30000,
     body: {
         model: "gpt-4o",
         messages: [{ role: "user", content: "Explique SSE" }],
-        stream: true
+        stream: true,
     },
-    extractor: [{
-        fn: ({ data }) => {
-            const content = data.choices?.[0]?.delta?.content;
-            return content ? { content } : {};
-        }
-    }]
+    extractor: [
+        {
+            fn: ({ data }) => {
+                const content = data.choices?.[0]?.delta?.content;
+                return content ? { content } : {};
+            },
+        },
+    ],
 });
 
 const generator = await stream.fetchIA();
@@ -192,7 +242,7 @@ for await (const chunk of generator) {
 
 O Groq segue o mesmo padrão — usa API compatível com OpenAI:
 
-```typescript
+````typescript
 stream.dataFetch({
     url: "https://api.groq.com/openai/v1/chat/completions",
     headers: {
@@ -305,7 +355,7 @@ const generator = await stream.fetchIA();
 for await (const chunk of generator) {
     process.stdout.write(chunk.content);
 }
-```
+````
 
 Cada builder segue a interface correspondente. Se a interface mudar, o builder acompanha automaticamente. O `.build()` retorna o objeto tipado exato para `dataFetch()`.
 
@@ -321,7 +371,7 @@ const controller = new AbortController();
 setTimeout(() => controller.abort(), 5000);
 
 const generator = await stream.fetchIA({
-    signal: controller.signal
+    signal: controller.signal,
 });
 
 for await (const chunk of generator) {
@@ -351,7 +401,11 @@ Quando o consumidor cancela via `break` ou `AbortSignal`, o `bodyReader` interno
 Use `onDone` para capturar os dados acumulados quando o stream terminar — ideal para persistir em banco de dados no backend:
 
 ```typescript
-import { DeepSeekHeadersBuilder, DeepSeekBodyBuilder, DeepSeekMessageBuilder } from "@felipe-lib/stream-http-event/builders-providers/deepseek";
+import {
+    DeepSeekHeadersBuilder,
+    DeepSeekBodyBuilder,
+    DeepSeekMessageBuilder,
+} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
 
 stream.dataFetch({
     url: "https://api.deepseek.com/chat/completions",
@@ -359,29 +413,24 @@ stream.dataFetch({
     body: new DeepSeekBodyBuilder()
         .model("deepseek-v4-pro")
         .messages([
-            new DeepSeekMessageBuilder().role("user").content("Explique RAG").build(),
+            new DeepSeekMessageBuilder()
+                .role("user")
+                .content("Explique RAG")
+                .build(),
         ])
         .stream(true)
         .build(),
-    extractor: [{
-        fn: ({ data }) => ({
-            content: data.choices?.[0]?.delta?.content ?? ""
-        })
-    }],
+    extractor: [
+        {
+            fn: ({ data }) => ({
+                content: data.choices?.[0]?.delta?.content ?? "",
+            }),
+        },
+    ],
     onDone: (finalData) => {
         console.log("Resposta completa:", finalData);
         // await db.messages.update({ response: finalData.content });
-    }
-});
-    extractor: [{
-        fn: ({ data }) => ({
-            content: data.choices?.[0]?.delta?.content ?? ""
-        })
-    }],
-    onDone: (finalData) => {
-        console.log("Resposta completa:", finalData);
-        // await db.messages.update({ response: finalData.content });
-    }
+    },
 });
 
 const generator = await stream.fetchIA();
@@ -402,22 +451,54 @@ Se a resposta não for `text/event-stream`, `fetchIA()` retorna um objeto JSON p
 ```typescript
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: { "Authorization": "Bearer sk-..." },
+    headers: { Authorization: "Bearer sk-..." },
     body: {
         model: "gpt-4o",
         messages: [{ role: "user", content: "Olá" }],
-        stream: false
+        stream: false,
     },
-    extractor: [{
-        fn: ({ data }) => ({
-            content: data.choices?.[0]?.message?.content ?? ""
-        })
-    }]
+    extractor: [
+        {
+            fn: ({ data }) => ({
+                content: data.choices?.[0]?.message?.content ?? "",
+            }),
+        },
+    ],
 });
 
 const result = await stream.fetchIA();
 
 console.log(result.content); // extraído pelo extrator
+```
+
+**Com builder (DeepSeek):**
+
+```typescript
+import {
+    DeepSeekHeadersBuilder,
+    DeepSeekBodyBuilder,
+    DeepSeekMessageBuilder,
+} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
+
+stream.dataFetch({
+    url: "https://api.deepseek.com/chat/completions",
+    headers: new DeepSeekHeadersBuilder().apiKey("sk-...").build(),
+    body: new DeepSeekBodyBuilder()
+        .model("deepseek-v4-pro")
+        .messages([new DeepSeekMessageBuilder().content("Olá").build()])
+        .stream(false)
+        .build(),
+    extractor: [
+        {
+            fn: ({ data }) => ({
+                content: data.choices?.[0]?.message?.content ?? "",
+            }),
+        },
+    ],
+});
+
+const result = await stream.fetchIA();
+console.log(result.content);
 ```
 
 Sem extratores, o JSON cru da API é retornado (ex.: `result.choices[0].message.content`).
@@ -433,13 +514,15 @@ import { createWriteStream } from "node:fs";
 
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: { "Authorization": "Bearer sk-..." },
+    headers: { Authorization: "Bearer sk-..." },
     body: {
         model: "gpt-4o",
         messages: [{ role: "user", content: "Olá" }],
-        stream: true
+        stream: true,
     },
-    extractor: [{ fn: ({ data }) => ({ content: data.choices?.[0]?.delta?.content }) }]
+    extractor: [
+        { fn: ({ data }) => ({ content: data.choices?.[0]?.delta?.content }) },
+    ],
 });
 
 const generator = await stream.fetchIA({ encodeBytes: true });
@@ -460,7 +543,7 @@ Encaminhe o stream diretamente para um cliente via Bun, Node.js ou Deno:
 ```typescript
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: { "Authorization": `Bearer ${process.env.OPENAI_API_KEY}` }
+    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
 });
 
 Bun.serve({
@@ -471,9 +554,9 @@ Bun.serve({
         const aiStream = ReadableStream.from(generator);
 
         return new Response(aiStream, {
-            headers: { "Content-Type": "text/event-stream" }
+            headers: { "Content-Type": "text/event-stream" },
         });
-    }
+    },
 });
 ```
 
@@ -487,20 +570,31 @@ Cada instância é independente — execute-as concorrentemente:
 const openaiStream = new StreamHttpEvent();
 openaiStream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: { "Authorization": "Bearer sk-openai-..." },
-    timeOut: 30000
+    headers: { Authorization: "Bearer sk-openai-..." },
+    timeOut: 30000,
 });
 
-const groqStream = new StreamHttpEvent();
-groqStream.dataFetch({
-    url: "https://api.groq.com/openai/v1/chat/completions",
-    headers: { "Authorization": "Bearer gsk-groq-..." },
-    timeOut: 15000
+import {
+    DeepSeekHeadersBuilder,
+    DeepSeekBodyBuilder,
+    DeepSeekMessageBuilder,
+} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
+
+const deepseekStream = new StreamHttpEvent();
+deepseekStream.dataFetch({
+    url: "https://api.deepseek.com/chat/completions",
+    headers: new DeepSeekHeadersBuilder().apiKey("sk-deepseek-...").build(),
+    body: new DeepSeekBodyBuilder()
+        .model("deepseek-v4-pro")
+        .messages([new DeepSeekMessageBuilder().content("Olá").build()])
+        .stream(true)
+        .build(),
+    timeOut: 15000,
 });
 
-const [openaiResult, groqResult] = await Promise.all([
+const [openaiResult, deepseekResult] = await Promise.all([
     openaiStream.fetchIA(),
-    groqStream.fetchIA()
+    deepseekStream.fetchIA(),
 ]);
 ```
 
@@ -532,7 +626,13 @@ interface FetchOptions<TData extends object, TEvent = unknown> {
 }
 
 interface extractorType<TData extends object, TEvent = unknown> {
-    fn: ({ data, event }: { data: TData; event?: TEvent }) => Record<string, unknown>;
+    fn: ({
+        data,
+        event,
+    }: {
+        data: TData;
+        event?: TEvent;
+    }) => Record<string, unknown>;
 }
 ```
 
@@ -552,9 +652,9 @@ O timeout é **baseado em inatividade** — ele reseta a cada chunk recebido. N�
 
 Dois estados internos rastreiam dados durante o streaming:
 
-| Estado | Escopo | Propósito |
-|--------|--------|-----------|
-| `state` | Uma linha SSE | Mantém `data`, `event` e `extracted` parseados para o chunk atual. Limpo após cada yield. |
+| Estado              | Escopo         | Propósito                                                                                                 |
+| ------------------- | -------------- | --------------------------------------------------------------------------------------------------------- |
+| `state`             | Uma linha SSE  | Mantém `data`, `event` e `extracted` parseados para o chunk atual. Limpo após cada yield.                 |
 | `stateLongDuration` | Stream inteiro | Acumula `data` (mais recente) e `extractedLongDuration` (merge de todos os chunks). Entregue ao `onDone`. |
 
 ### `[DONE]`
@@ -581,19 +681,19 @@ ISC
 - [Installation](#installation-1)
 - [Core Concepts](#core-concepts)
 - [API Reference](#api-reference-1)
-  - [`dataFetch()`](#datafetch-1)
-  - [`fetchIA()`](#fetchia-1)
-  - [`extractorType`](#extractortype-1)
+    - [`dataFetch()`](#datafetch-1)
+    - [`fetchIA()`](#fetchia-1)
+    - [`extractorType`](#extractortype-1)
 - [Guides](#guides-1)
-  - [Basic Streaming (OpenAI / Groq)](#basic-streaming-openai--groq)
+    - [Basic Streaming (OpenAI / Groq)](#basic-streaming-openai--groq)
 - [Per-Provider Extractors (Anthropic)](#per-provider-extractors-anthropic)
 - [Per-Provider Builders (DeepSeek)](#per-provider-builders-deepseek)
 - [Cancellation](#cancellation-1)
-  - [Saving the Full Response](#saving-the-full-response)
-  - [Non-Streaming Fallback](#non-streaming-fallback-1)
-  - [Piping to File](#piping-to-file-1)
-  - [HTTP Proxy Server](#http-proxy-server-1)
-  - [Multiple Providers in Parallel](#multiple-providers-in-parallel-1)
+    - [Saving the Full Response](#saving-the-full-response)
+    - [Non-Streaming Fallback](#non-streaming-fallback-1)
+    - [Piping to File](#piping-to-file-1)
+    - [HTTP Proxy Server](#http-proxy-server-1)
+    - [Multiple Providers in Parallel](#multiple-providers-in-parallel-1)
 - [TypeScript Types](#typescript-types-1)
 - [Internals](#internals)
 - [License](#license-1)
@@ -610,23 +710,61 @@ const stream = new StreamHttpEvent();
 // 1. Configure
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: { "Authorization": "Bearer sk-your-token" },
+    headers: { Authorization: "Bearer sk-your-token" },
     body: {
         model: "gpt-4o",
         messages: [{ role: "user", content: "Hello!" }],
-        stream: true
+        stream: true,
     },
-    extractor: [{
-        fn: ({ data }) => ({
-            content: data.choices?.[0]?.delta?.content ?? ""
-        })
-    }]
+    extractor: [
+        {
+            fn: ({ data }) => ({
+                content: data.choices?.[0]?.delta?.content ?? "",
+            }),
+        },
+    ],
 });
 
 // 2. Request
 const generator = await stream.fetchIA();
 
 // 3. Read
+for await (const chunk of generator) {
+    process.stdout.write(chunk.content);
+}
+```
+
+**With typed builder (DeepSeek):**
+
+```typescript
+import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
+import {
+    DeepSeekHeadersBuilder,
+    DeepSeekBodyBuilder,
+    DeepSeekMessageBuilder,
+} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
+
+const stream = new StreamHttpEvent();
+
+stream.dataFetch({
+    url: "https://api.deepseek.com/chat/completions",
+    headers: new DeepSeekHeadersBuilder().apiKey("sk-your-token").build(),
+    body: new DeepSeekBodyBuilder()
+        .model("deepseek-v4-pro")
+        .messages([new DeepSeekMessageBuilder().content("Hello!").build()])
+        .stream(true)
+        .build(),
+    extractor: [
+        {
+            fn: ({ data }) => ({
+                content: data.choices?.[0]?.delta?.content ?? "",
+            }),
+        },
+    ],
+});
+
+const generator = await stream.fetchIA();
+
 for await (const chunk of generator) {
     process.stdout.write(chunk.content);
 }
@@ -649,6 +787,7 @@ pnpm add @felipe-lib/stream-http-event
 **What problem this solves.** AI providers return streaming responses as raw SSE bytes. Parsing those manually means dealing with buffering, line splitting, `[DONE]` detection, and per-provider response shapes. This library handles all of that and gives you a clean `AsyncGenerator`.
 
 **Two-step pattern.**
+
 1. `dataFetch()` — configure the instance (URL, headers, body, timeout, extractors, `onDone` callback). Call once.
 2. `fetchIA()` — execute the request. Returns an `AsyncGenerator` (if the response is `text/event-stream`) or a parsed JSON object (fallback for non-streaming).
 
@@ -666,14 +805,14 @@ Configures the instance. Must be called before `fetchIA()`.
 stream.dataFetch(config: dataFetchType): void
 ```
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `url` | `string` | Yes | AI provider endpoint |
-| `headers` | `Record<string, string>` or provider-specific Builder type | No | HTTP headers (Authorization, Content-Type, etc.). Automatically typed when using a provider builder. |
-| `body` | `Record<string, unknown>` or provider-specific Builder type | No | Request body (serialized as JSON). Configure here or use a provider builder for auto-completion of all fields. |
-| `timeOut` | `number` | No | Inactivity timeout in milliseconds. Resets on each chunk. No total-time limit. |
-| `extractor` | `extractorType[]` | No | Default extractors for every `fetchIA()` call. |
-| `onDone` | `(finalData: Record<string, unknown>) => void` | No | Callback fired when the stream ends. Receives the full accumulated response (merge of all extracted chunks). Useful for saving to a database. |
+| Parameter   | Type                                                        | Required | Description                                                                                                                                   |
+| ----------- | ----------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`       | `string`                                                    | Yes      | AI provider endpoint                                                                                                                          |
+| `headers`   | `Record<string, string>` or provider-specific Builder type  | No       | HTTP headers (Authorization, Content-Type, etc.). Automatically typed when using a provider builder.                                          |
+| `body`      | `Record<string, unknown>` or provider-specific Builder type | No       | Request body (serialized as JSON). Configure here or use a provider builder for auto-completion of all fields.                                |
+| `timeOut`   | `number`                                                    | No       | Inactivity timeout in milliseconds. Resets on each chunk. No total-time limit.                                                                |
+| `extractor` | `extractorType[]`                                           | No       | Default extractors for every `fetchIA()` call.                                                                                                |
+| `onDone`    | `(finalData: Record<string, unknown>) => void`              | No       | Callback fired when the stream ends. Receives the full accumulated response (merge of all extracted chunks). Useful for saving to a database. |
 
 ---
 
@@ -685,17 +824,19 @@ Executes the HTTP request and returns either an `AsyncGenerator` or a parsed JSO
 stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | object>
 ```
 
-| Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `method` | `string` | No | HTTP method. Default: `"POST"` |
-| `signal` | `AbortSignal` | No | AbortController signal for request cancellation |
-| `encodeBytes` | `boolean` | No | If `true`, yielded chunks are `Uint8Array`. If `false`/`undefined`, chunks are plain objects. |
+| Parameter     | Type          | Required | Description                                                                                   |
+| ------------- | ------------- | -------- | --------------------------------------------------------------------------------------------- |
+| `method`      | `string`      | No       | HTTP method. Default: `"POST"`                                                                |
+| `signal`      | `AbortSignal` | No       | AbortController signal for request cancellation                                               |
+| `encodeBytes` | `boolean`     | No       | If `true`, yielded chunks are `Uint8Array`. If `false`/`undefined`, chunks are plain objects. |
 
 **Returns:**
+
 - `AsyncGenerator<Record<string, unknown> | Uint8Array, void, unknown>` — if `Content-Type` is `text/event-stream`. Consume with `for await (const chunk of generator)`.
 - `object` — the parsed JSON response for non-streaming requests. If extractors are configured in `dataFetch()`, they are applied sequentially over the JSON.
 
 **Errors:**
+
 - Throws if `dataFetch()` was not called (no URL configured).
 - Throws if the HTTP response is not OK (`!fetcher.ok`).
 - Throws if the response has no body.
@@ -708,11 +849,18 @@ Each extractor function receives the parsed `data` and `event` (optional) from t
 
 ```typescript
 type extractorType<TData extends object, TEvent = unknown> = {
-    fn: ({ data, event }: { data: TData; event?: TEvent }) => Record<string, unknown>;
+    fn: ({
+        data,
+        event,
+    }: {
+        data: TData;
+        event?: TEvent;
+    }) => Record<string, unknown>;
 };
 ```
 
 **Behavior:**
+
 - `event` is **optional** — absent in non-streaming JSON responses.
 - If your function returns `{}` (empty), nothing is yielded for that chunk.
 - **Streaming:** multiple extractors run sequentially per line. The **last** extractor's result determines what gets yielded. Values accumulate in `extractedLongDuration` via spread merge (`{ ...old, ...new }`) and are delivered to `onDone` when the stream ends.
@@ -731,20 +879,22 @@ stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
     headers: {
         "Content-Type": "application/json",
-        "Authorization": "Bearer sk-your-token"
+        Authorization: "Bearer sk-your-token",
     },
     timeOut: 30000,
     body: {
         model: "gpt-4o",
         messages: [{ role: "user", content: "Explain SSE" }],
-        stream: true
+        stream: true,
     },
-    extractor: [{
-        fn: ({ data }) => {
-            const content = data.choices?.[0]?.delta?.content;
-            return content ? { content } : {};
-        }
-    }]
+    extractor: [
+        {
+            fn: ({ data }) => {
+                const content = data.choices?.[0]?.delta?.content;
+                return content ? { content } : {};
+            },
+        },
+    ],
 });
 
 const generator = await stream.fetchIA();
@@ -756,7 +906,7 @@ for await (const chunk of generator) {
 
 Groq follows the same pattern — it uses an OpenAI-compatible API:
 
-```typescript
+````typescript
 stream.dataFetch({
     url: "https://api.groq.com/openai/v1/chat/completions",
     headers: {
@@ -869,7 +1019,7 @@ const generator = await stream.fetchIA();
 for await (const chunk of generator) {
     process.stdout.write(chunk.content);
 }
-```
+````
 
 Each builder follows the corresponding interface. If the interface changes, the builder automatically keeps pace. `.build()` returns the exact typed object for `dataFetch()`.
 
@@ -885,7 +1035,7 @@ const controller = new AbortController();
 setTimeout(() => controller.abort(), 5000);
 
 const generator = await stream.fetchIA({
-    signal: controller.signal
+    signal: controller.signal,
 });
 
 for await (const chunk of generator) {
@@ -915,7 +1065,11 @@ When the consumer cancels via `break` or `AbortSignal`, the internal `bodyReader
 Use `onDone` to capture the accumulated data when the stream finishes — ideal for persisting to a database on the backend:
 
 ```typescript
-import { DeepSeekHeadersBuilder, DeepSeekBodyBuilder, DeepSeekMessageBuilder } from "@felipe-lib/stream-http-event/builders-providers/deepseek";
+import {
+    DeepSeekHeadersBuilder,
+    DeepSeekBodyBuilder,
+    DeepSeekMessageBuilder,
+} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
 
 stream.dataFetch({
     url: "https://api.deepseek.com/chat/completions",
@@ -923,19 +1077,24 @@ stream.dataFetch({
     body: new DeepSeekBodyBuilder()
         .model("deepseek-v4-pro")
         .messages([
-            new DeepSeekMessageBuilder().role("user").content("Explain RAG").build(),
+            new DeepSeekMessageBuilder()
+                .role("user")
+                .content("Explain RAG")
+                .build(),
         ])
         .stream(true)
         .build(),
-    extractor: [{
-        fn: ({ data }) => ({
-            content: data.choices?.[0]?.delta?.content ?? ""
-        })
-    }],
+    extractor: [
+        {
+            fn: ({ data }) => ({
+                content: data.choices?.[0]?.delta?.content ?? "",
+            }),
+        },
+    ],
     onDone: (finalData) => {
         console.log("Full response:", finalData);
         // await db.messages.update({ response: finalData.content });
-    }
+    },
 });
 
 const generator = await stream.fetchIA();
@@ -956,22 +1115,54 @@ If the response is not `text/event-stream`, `fetchIA()` returns a parsed JSON ob
 ```typescript
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: { "Authorization": "Bearer sk-..." },
+    headers: { Authorization: "Bearer sk-..." },
     body: {
         model: "gpt-4o",
         messages: [{ role: "user", content: "Hello" }],
-        stream: false
+        stream: false,
     },
-    extractor: [{
-        fn: ({ data }) => ({
-            content: data.choices?.[0]?.message?.content ?? ""
-        })
-    }]
+    extractor: [
+        {
+            fn: ({ data }) => ({
+                content: data.choices?.[0]?.message?.content ?? "",
+            }),
+        },
+    ],
 });
 
 const result = await stream.fetchIA();
 
 console.log(result.content); // extracted by the extractor
+```
+
+**With builder (DeepSeek):**
+
+```typescript
+import {
+    DeepSeekHeadersBuilder,
+    DeepSeekBodyBuilder,
+    DeepSeekMessageBuilder,
+} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
+
+stream.dataFetch({
+    url: "https://api.deepseek.com/chat/completions",
+    headers: new DeepSeekHeadersBuilder().apiKey("sk-...").build(),
+    body: new DeepSeekBodyBuilder()
+        .model("deepseek-v4-pro")
+        .messages([new DeepSeekMessageBuilder().content("Hello").build()])
+        .stream(false)
+        .build(),
+    extractor: [
+        {
+            fn: ({ data }) => ({
+                content: data.choices?.[0]?.message?.content ?? "",
+            }),
+        },
+    ],
+});
+
+const result = await stream.fetchIA();
+console.log(result.content);
 ```
 
 Without extractors, the raw API JSON is returned (e.g. `result.choices[0].message.content`).
@@ -987,13 +1178,15 @@ import { createWriteStream } from "node:fs";
 
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: { "Authorization": "Bearer sk-..." },
+    headers: { Authorization: "Bearer sk-..." },
     body: {
         model: "gpt-4o",
         messages: [{ role: "user", content: "Hello" }],
-        stream: true
+        stream: true,
     },
-    extractor: [{ fn: ({ data }) => ({ content: data.choices?.[0]?.delta?.content }) }]
+    extractor: [
+        { fn: ({ data }) => ({ content: data.choices?.[0]?.delta?.content }) },
+    ],
 });
 
 const generator = await stream.fetchIA({ encodeBytes: true });
@@ -1014,7 +1207,7 @@ Forward the stream directly to a client via Bun, Node.js, or Deno:
 ```typescript
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: { "Authorization": `Bearer ${process.env.OPENAI_API_KEY}` }
+    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
 });
 
 Bun.serve({
@@ -1025,9 +1218,9 @@ Bun.serve({
         const aiStream = ReadableStream.from(generator);
 
         return new Response(aiStream, {
-            headers: { "Content-Type": "text/event-stream" }
+            headers: { "Content-Type": "text/event-stream" },
         });
-    }
+    },
 });
 ```
 
@@ -1041,20 +1234,31 @@ Each instance is independent — run them concurrently:
 const openaiStream = new StreamHttpEvent();
 openaiStream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: { "Authorization": "Bearer sk-openai-..." },
-    timeOut: 30000
+    headers: { Authorization: "Bearer sk-openai-..." },
+    timeOut: 30000,
 });
 
-const groqStream = new StreamHttpEvent();
-groqStream.dataFetch({
-    url: "https://api.groq.com/openai/v1/chat/completions",
-    headers: { "Authorization": "Bearer gsk-groq-..." },
-    timeOut: 15000
+import {
+    DeepSeekHeadersBuilder,
+    DeepSeekBodyBuilder,
+    DeepSeekMessageBuilder,
+} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
+
+const deepseekStream = new StreamHttpEvent();
+deepseekStream.dataFetch({
+    url: "https://api.deepseek.com/chat/completions",
+    headers: new DeepSeekHeadersBuilder().apiKey("sk-deepseek-...").build(),
+    body: new DeepSeekBodyBuilder()
+        .model("deepseek-v4-pro")
+        .messages([new DeepSeekMessageBuilder().content("Hello").build()])
+        .stream(true)
+        .build(),
+    timeOut: 15000,
 });
 
-const [openaiResult, groqResult] = await Promise.all([
+const [openaiResult, deepseekResult] = await Promise.all([
     openaiStream.fetchIA(),
-    groqStream.fetchIA()
+    deepseekStream.fetchIA(),
 ]);
 ```
 
@@ -1086,7 +1290,13 @@ interface FetchOptions<TData extends object, TEvent = unknown> {
 }
 
 interface extractorType<TData extends object, TEvent = unknown> {
-    fn: ({ data, event }: { data: TData; event?: TEvent }) => Record<string, unknown>;
+    fn: ({
+        data,
+        event,
+    }: {
+        data: TData;
+        event?: TEvent;
+    }) => Record<string, unknown>;
 }
 ```
 
@@ -1106,9 +1316,9 @@ Timeout is **inactivity-based** — it resets on every received chunk. There is 
 
 Two internal states track data during streaming:
 
-| State | Scope | Purpose |
-|-------|-------|---------|
-| `state` | One SSE line | Holds the parsed `data`, `event`, and `extracted` for the current chunk. Cleared after each yield. |
+| State               | Scope         | Purpose                                                                                                    |
+| ------------------- | ------------- | ---------------------------------------------------------------------------------------------------------- |
+| `state`             | One SSE line  | Holds the parsed `data`, `event`, and `extracted` for the current chunk. Cleared after each yield.         |
 | `stateLongDuration` | Entire stream | Accumulates `data` (latest) and `extractedLongDuration` (merged across all chunks). Delivered to `onDone`. |
 
 ### `[DONE]`

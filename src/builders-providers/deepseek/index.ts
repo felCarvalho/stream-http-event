@@ -17,5 +17,3 @@ export type {
     DeepSeekTool,
     DeepSeekRequestBody,
 } from "../../types-providers/types.deepseek.js";
-
-export class DeepSeekProvider {}
