@@ -24,6 +24,7 @@ Funciona em qualquer runtime com `fetch`, `AsyncGenerator`, `TextDecoder` e `Tex
     - [Streaming Básico (OpenAI / Groq)](#streaming-básico-openai--groq)
 - [Extratores por Provedor (Anthropic)](#extratores-por-provedor-anthropic)
 - [Builders por Provedor (DeepSeek)](#builders-por-provedor-deepseek)
+    - [Builders por Provedor (Anthropic)](#builders-por-provedor-anthropic)
 - [Cancelamento](#cancelamento)
     - [Salvando a Resposta Completa](#salvando-a-resposta-completa)
     - [Fallback Não-Streaming](#fallback-não-streaming)
@@ -366,6 +367,55 @@ Cada builder segue a interface correspondente. Se a interface mudar, o builder a
 
 ---
 
+### Builders por Provedor (Anthropic)
+
+> **Em desenvolvimento.** Os builders Anthropic estão em fase inicial. A API de tipos está definida, mas ainda não cobre todos os recursos da Anthropic Messages API.
+
+Use builders para montar headers e body com tipos exatos para a [Anthropic Messages API](https://docs.anthropic.com/en/api/messages):
+
+```typescript
+import {
+    AnthropicHeadersBuilder, AnthropicBodyBuilder, AnthropicMessageBuilder,
+    AnthropicThinkingBuilder,
+} from "@felipe-lib/stream-http-event/builders-providers/anthropic";
+
+const stream = new StreamHttpEvent();
+
+stream.dataFetch({
+    url: "https://api.anthropic.com/v1/messages",
+    headers: new AnthropicHeadersBuilder().apiKey("sk-ant-seu-token").build(),
+    body: new AnthropicBodyBuilder()
+        .model("claude-sonnet-4-20250514")
+        .maxTokens(1024)
+        .messages([
+            new AnthropicMessageBuilder().role("user").content("Olá, Claude!").build(),
+        ])
+        .system("Você é um assistente útil.")
+        .thinking(
+            new AnthropicThinkingBuilder().type("enabled").budgetTokens(2048).build()
+        )
+        .stream(true)
+        .build(),
+    extractor: [{
+        fn: ({ data }) => {
+            if (data.type === "content_block_delta") {
+                return { text: data.delta?.text ?? "" };
+            }
+            return {};
+        }
+    }],
+});
+
+const generator = await stream.fetchIA();
+for await (const chunk of generator) {
+    process.stdout.write(chunk.text);
+}
+```
+
+Cada builder segue a interface `types.anthropic.ts`. O `.build()` retorna o objeto tipado exato para `dataFetch()`.
+
+---
+
 ### Cancelamento
 
 **Via AbortController (antes da requisição começar):**
@@ -693,6 +743,7 @@ ISC
     - [Basic Streaming (OpenAI / Groq)](#basic-streaming-openai--groq)
 - [Per-Provider Extractors (Anthropic)](#per-provider-extractors-anthropic)
 - [Per-Provider Builders (DeepSeek)](#per-provider-builders-deepseek)
+    - [Per-Provider Builders (Anthropic)](#per-provider-builders-anthropic)
 - [Cancellation](#cancellation-1)
     - [Saving the Full Response](#saving-the-full-response)
     - [Non-Streaming Fallback](#non-streaming-fallback-1)
@@ -1032,6 +1083,55 @@ for await (const chunk of generator) {
 ````
 
 Each builder follows the corresponding interface. If the interface changes, the builder automatically keeps pace. `.build()` returns the exact typed object for `dataFetch()`.
+
+---
+
+### Per-Provider Builders (Anthropic)
+
+> **Under development.** Anthropic builders are in early stages. The type API is defined, but not all Anthropic Messages API features are covered yet.
+
+Use builders to construct headers and body with exact types for the [Anthropic Messages API](https://docs.anthropic.com/en/api/messages):
+
+```typescript
+import {
+    AnthropicHeadersBuilder, AnthropicBodyBuilder, AnthropicMessageBuilder,
+    AnthropicThinkingBuilder,
+} from "@felipe-lib/stream-http-event/builders-providers/anthropic";
+
+const stream = new StreamHttpEvent();
+
+stream.dataFetch({
+    url: "https://api.anthropic.com/v1/messages",
+    headers: new AnthropicHeadersBuilder().apiKey("sk-ant-your-token").build(),
+    body: new AnthropicBodyBuilder()
+        .model("claude-sonnet-4-20250514")
+        .maxTokens(1024)
+        .messages([
+            new AnthropicMessageBuilder().role("user").content("Hello, Claude!").build(),
+        ])
+        .system("You are a helpful assistant.")
+        .thinking(
+            new AnthropicThinkingBuilder().type("enabled").budgetTokens(2048).build()
+        )
+        .stream(true)
+        .build(),
+    extractor: [{
+        fn: ({ data }) => {
+            if (data.type === "content_block_delta") {
+                return { text: data.delta?.text ?? "" };
+            }
+            return {};
+        }
+    }],
+});
+
+const generator = await stream.fetchIA();
+for await (const chunk of generator) {
+    process.stdout.write(chunk.text);
+}
+```
+
+Each builder follows the `types.anthropic.ts` interface. `.build()` returns the exact typed object for `dataFetch()`.
 
 ---
 
