@@ -266,11 +266,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
         }
     }
 
-    public async fetchIA({
-        encodeBytes,
-        signal,
-        method,
-    }: FetchOptions<TData, TEvent>) {
+    public async fetchIA({ encodeBytes, signal, method }: FetchOptions) {
         if (!this.url) {
             throw new Error("dataFetch() precisa da url do seu provedor de IA");
         }

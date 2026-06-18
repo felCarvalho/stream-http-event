@@ -61,10 +61,8 @@ export interface streamIaType<TData extends object, TEvent = unknown> {
     extractor?: extractorType<TData, TEvent>[];
 }
 
-export interface FetchOptions<TData extends object, TEvent = unknown> {
+export interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
-    body?: string;
-    extractor?: extractorType<TData, TEvent>[];
 }

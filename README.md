@@ -1,6 +1,6 @@
 # @felipe-lib/stream-http-event
 
-[![npm version](https://img.shields.io/badge/npm-v1.4.6-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
+[![npm version](https://img.shields.io/badge/npm-v1.5.3-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
 [![license](https://img.shields.io/badge/license-ISC-green)](./LICENSE)
 
 **Zero dependências em runtime.** Consuma respostas HTTP em streaming de provedores de IA (OpenAI, Anthropic, Groq, DeepSeek, etc.) via o protocolo [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
@@ -674,7 +674,7 @@ interface dataFetchType<
     onDone?: (finalData: Record<string, unknown>) => void;
 }
 
-interface FetchOptions<TData extends object, TEvent = unknown> {
+interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
@@ -1393,7 +1393,7 @@ interface dataFetchType<
     onDone?: (finalData: Record<string, unknown>) => void;
 }
 
-interface FetchOptions<TData extends object, TEvent = unknown> {
+interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
