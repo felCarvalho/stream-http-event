@@ -237,12 +237,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                 this.timeout({ timeOutId, bodyReader });
 
                 if (serialized === "data: [DONE]") {
-                    const extractedLongDuration = state.getStateOne(
-                        "extractedLongDuration",
-                    ) as Record<string, unknown>;
-                    this.onDone?.(extractedLongDuration);
-
-                    return;
+                    break;
                 }
 
                 const extracted = state.getStateOne("extracted");
@@ -258,6 +253,11 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                 state.clearStateByKey("data");
                 state.clearStateByKey("event");
             }
+
+            const extractedLongDuration = stateLongDuration.getStateOne(
+                "extractedLongDuration",
+            ) as Record<string, unknown>;
+            this.onDone?.(extractedLongDuration);
         } catch (e: unknown) {
             throw e;
         } finally {
