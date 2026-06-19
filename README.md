@@ -276,26 +276,7 @@ for await (const chunk of generator) {
 }
 ```
 
-**DeepSeek, Together AI, Fireworks, Perplexity, xAI:**
-
-Os [builders do DeepSeek](#builders-por-provedor-deepseek) funcionam com qualquer provedor OpenAI-compatível — basta trocar a URL no `dataFetch()`. Exemplo:
-
-```typescript
-stream.dataFetch({
-    url: "https://api.together.xyz/v1/chat/completions", // ou Groq, Fireworks, etc.
-    headers: new DeepSeekHeadersBuilder().apiKey("sk-seu-token").build(),
-    body: new DeepSeekBodyBuilder()
-        .model("mistralai/Mixtral-8x7B-Instruct-v0.1")
-        .messages([new DeepSeekMessageBuilder().role("user").content("Olá").build()])
-        .stream(true)
-        .build(),
-    extractor: [{
-        fn: ({ data }) => ({ content: data.choices?.[0]?.delta?.content ?? "" })
-    }],
-});
-```
-
-> **Compatível com:** Groq, Together AI, Fireworks, Perplexity, xAI, DeepSeek, e qualquer API que use o formato `{ messages, model, stream, ... }`. Apenas ajuste a URL e a chave de API.
+Para usar builders tipados com qualquer provedor OpenAI-compatível, veja a seção [Builders por Provedor (DeepSeek / OpenAI-compatível)](#builders-por-provedor-deepseek--openai-compatível) — basta trocar a URL.
 
 ---
 
@@ -1027,26 +1008,7 @@ for await (const chunk of generator) {
 }
 ```
 
-**DeepSeek, Together AI, Fireworks, Perplexity, xAI:**
-
-The [DeepSeek builders](#per-provider-builders-deepseek) work with any OpenAI-compatible provider — just swap the URL in `dataFetch()`. Example:
-
-```typescript
-stream.dataFetch({
-    url: "https://api.together.xyz/v1/chat/completions", // or Groq, Fireworks, etc.
-    headers: new DeepSeekHeadersBuilder().apiKey("sk-your-token").build(),
-    body: new DeepSeekBodyBuilder()
-        .model("mistralai/Mixtral-8x7B-Instruct-v0.1")
-        .messages([new DeepSeekMessageBuilder().role("user").content("Hello").build()])
-        .stream(true)
-        .build(),
-    extractor: [{
-        fn: ({ data }) => ({ content: data.choices?.[0]?.delta?.content ?? "" })
-    }],
-});
-```
-
-> **Compatible with:** Groq, Together AI, Fireworks, Perplexity, xAI, DeepSeek, and any API using the `{ messages, model, stream, ... }` shape. Just adjust the URL and API key.
+For typed builders with any OpenAI-compatible provider, see the [Per-Provider Builders (DeepSeek / OpenAI-compatible)](#per-provider-builders-deepseek--openai-compatible) section — just swap the URL.
 
 ---
 
