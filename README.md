@@ -140,7 +140,7 @@ pnpm add @felipe-lib/stream-http-event
 Configura a instância. Deve ser chamado antes de `fetchIA()`.
 
 ```typescript
-stream.dataFetch<H, B>(config: dataFetchType<TData, TEvent, H, B>): void
+stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 ```
 
 | Parâmetro   | Tipo                                                      | Obrigatório | Descrição                                                                                                                                                  |
@@ -172,7 +172,7 @@ stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | object>
 **Retorna:**
 
 - `AsyncGenerator<string | Uint8Array, void, unknown>` — se `Content-Type` for `text/event-stream`. Consuma com `for await (const chunk of generator)`.
-- `object` — a resposta JSON parseada para requisições não-streaming. Se houver extratores configurados em `dataFetch()`, eles são aplicados sequencialmente sobre o JSON.
+- `Record<string, unknown>` — a resposta JSON parseada para requisições não-streaming. Se houver extratores configurados em `dataFetch()`, eles são aplicados sequencialmente sobre o JSON.
 
 **Erros:**
 
@@ -187,7 +187,7 @@ stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | object>
 Cada função extratora recebe os campos `data` e `event` (opcional) do chunk atual.
 
 ```typescript
-type extractorType<TData extends object, TEvent = unknown> = {
+type extractorType<TData extends object = Record<string, unknown>, TEvent = string> = {
     fn: ({
         data,
         event,
@@ -200,7 +200,7 @@ type extractorType<TData extends object, TEvent = unknown> = {
 
 **Comportamento:**
 
-- `event` é **opcional** — ausente em respostas JSON não-streaming.
+- `event` é **opcional** — ausente em respostas JSON não-streaming. Quando presente, é uma string (ex: `"ping"`, `"content_block_delta"`).
 - **Streaming:** a saída é formatada como string SSE (`data: {...}\nevent: ...\n\n`) ou, se `formatSSE: false`, como string com `\n\n` no final. Os dados acumulados de todo o stream são entregues ao `onDone` como `{ chunksAcumulated }`. Os extratores **não** têm efeito no streaming.
 - **JSON (não-streaming):** todos os extratores são aplicados em sequência. O retorno `{}` alimenta o próximo extrator com o objeto vazio.
 
@@ -670,15 +670,13 @@ const [openaiResult, deepseekResult] = await Promise.all([
 // --- Tipos públicos ---
 
 interface dataFetchType<
-    TData extends object,
-    TEvent = unknown,
     H extends Record<string, string> = Record<string, string>,
     B extends Record<string, unknown> = Record<string, unknown>,
 > {
     url: string;
     headers?: H;
     timeOut?: number;
-    extractor?: extractorType<TData, TEvent>[];
+    extractor?: extractorType[];
     onDone?: (finalData: Record<string, unknown>) => void;
     body?: B;
 }
@@ -690,7 +688,7 @@ interface FetchOptions {
     formatSSE?: boolean;
 }
 
-interface extractorType<TData extends object, TEvent = unknown> {
+interface extractorType<TData extends object = Record<string, unknown>, TEvent = string> {
     fn: ({
         data,
         event,
@@ -873,7 +871,7 @@ pnpm add @felipe-lib/stream-http-event
 Configures the instance. Must be called before `fetchIA()`.
 
 ```typescript
-stream.dataFetch<H, B>(config: dataFetchType<TData, TEvent, H, B>): void
+stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 ```
 
 | Parameter   | Type                                                        | Required | Description                                                                                                                                   |
@@ -905,7 +903,7 @@ stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | object>
 **Returns:**
 
 - `AsyncGenerator<string | Uint8Array, void, unknown>` — if `Content-Type` is `text/event-stream`. Consume with `for await (const chunk of generator)`.
-- `object` — the parsed JSON response for non-streaming requests. If extractors are configured in `dataFetch()`, they are applied sequentially over the JSON.
+- `Record<string, unknown>` — the parsed JSON response for non-streaming requests. If extractors are configured in `dataFetch()`, they are applied sequentially over the JSON.
 
 **Errors:**
 
@@ -920,7 +918,7 @@ stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | object>
 Each extractor function receives the parsed `data` and `event` (optional) from the current chunk.
 
 ```typescript
-type extractorType<TData extends object, TEvent = unknown> = {
+type extractorType<TData extends object = Record<string, unknown>, TEvent = string> = {
     fn: ({
         data,
         event,
@@ -933,7 +931,7 @@ type extractorType<TData extends object, TEvent = unknown> = {
 
 **Behavior:**
 
-- `event` is **optional** — absent in non-streaming JSON responses.
+- `event` is **optional** — absent in non-streaming JSON responses. When present, it's a string (e.g. `"ping"`, `"content_block_delta"`).
 - **Streaming:** output is formatted as an SSE string (`data: {...}\nevent: ...\n\n`) or, if `formatSSE: false`, as a string with trailing `\n\n`. All stream data accumulated is delivered to `onDone` as `{ chunksAcumulated }`. Extractors have **no effect** in streaming.
 - **JSON (non-streaming):** all extractors are applied in sequence. Returning `{}` feeds an empty object to the next extractor.
 
@@ -1402,15 +1400,13 @@ const [openaiResult, deepseekResult] = await Promise.all([
 // --- Public types ---
 
 interface dataFetchType<
-    TData extends object,
-    TEvent = unknown,
     H extends Record<string, string> = Record<string, string>,
     B extends Record<string, unknown> = Record<string, unknown>,
 > {
     url: string;
     headers?: H;
     timeOut?: number;
-    extractor?: extractorType<TData, TEvent>[];
+    extractor?: extractorType[];
     onDone?: (finalData: Record<string, unknown>) => void;
     body?: B;
 }
@@ -1422,7 +1418,7 @@ interface FetchOptions {
     formatSSE?: boolean;
 }
 
-interface extractorType<TData extends object, TEvent = unknown> {
+interface extractorType<TData extends object = Record<string, unknown>, TEvent = string> {
     fn: ({
         data,
         event,

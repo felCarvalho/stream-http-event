@@ -7,25 +7,18 @@ import type {
     extractorType,
     stateLocalType,
 } from "./type.js";
-export class StreamHttpEvent<TData extends object, TEvent = unknown> {
+export class StreamHttpEvent {
     private url: string = "";
     private headers: Record<string, string> = {};
     private timeOut?: number;
-    private extractor?: extractorType<TData, TEvent>[];
+    private extractor?: extractorType[];
     private onDone?: (finalData: Record<string, unknown>) => void;
     private body?: Record<string, unknown>;
 
     public dataFetch<
         H extends Record<string, string> = Record<string, string>,
         B extends Record<string, unknown> = Record<string, unknown>,
-    >({
-        url,
-        headers,
-        body,
-        timeOut,
-        extractor,
-        onDone,
-    }: dataFetchType<TData, TEvent, H, B>) {
+    >({ url, headers, body, timeOut, extractor, onDone }: dataFetchType<H, B>) {
         this.url = url;
         this.headers = headers ?? ({} as Record<string, string>);
         this.timeOut = timeOut;
@@ -103,7 +96,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
         });
     }
 
-    private parseAndExtracted<TData extends object, TEvent = unknown>({
+    private parseAndExtracted({
         line,
         state,
         eventName,
@@ -111,7 +104,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
     }: {
         line: string;
         state: stateLocalType;
-        extractor: extractorType<TData, TEvent>[];
+        extractor: extractorType[];
         eventName: "data" | "event";
     }) {
         const clear = line.trim().slice(`${eventName}: `.length);
@@ -129,8 +122,8 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                 );
             }
 
-            const data = state.getStateOne("data") as TData;
-            const event = state.getStateOne("event") as TEvent;
+            const data = state.getStateOne("data") as Record<string, unknown>;
+            const event = state.getStateOne("event");
 
             if (extractor.length && (data || event)) {
                 for (const extItem of extractor) {
@@ -146,7 +139,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
         extractor,
         state,
         stateLongDuration,
-    }: serializeType<TData, TEvent>) {
+    }: serializeType) {
         const lines = buffer.getBuffer().split("\n\n");
         buffer.setBuffer(lines.pop() ?? "");
 
@@ -165,7 +158,10 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                         extractor: extractor ?? [],
                         eventName: "data",
                     });
-                    const data = state.getStateOne("data") as TData;
+                    const data = state.getStateOne("data") as Record<
+                        string,
+                        unknown
+                    >;
                     stateLongDuration.setState({ data });
                 }
 
@@ -188,7 +184,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
         encodeBytes,
         extractor,
         formatSSE,
-    }: streamIaType<TData, TEvent>) {
+    }: streamIaType) {
         const bodyReader = body.getReader();
         const buffer = this.bufferControl();
         const timeOutId = this.timeOutControl();
@@ -314,7 +310,11 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                 formatSSE,
                 encodeBytes,
                 extractor: this.extractor ?? [],
-            });
+            }) as AsyncGenerator<
+                string | Uint8Array<ArrayBuffer>,
+                void,
+                unknown
+            >;
         } else {
             const extractors = this.extractor;
             let data = await fetcher.json();
@@ -325,7 +325,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                 }
             }
 
-            return data;
+            return data as Promise<Record<string, unknown>>;
         }
     }
 }

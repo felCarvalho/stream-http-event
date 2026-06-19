@@ -19,7 +19,7 @@ export interface stateLocalType {
     hasStateByKey: (key: string) => boolean;
 }
 
-export interface extractorType<TData extends object, TEvent = unknown> {
+export interface extractorType<TData extends object = Record<string, unknown>, TEvent = string> {
     fn: ({
         data,
         event,
@@ -30,22 +30,20 @@ export interface extractorType<TData extends object, TEvent = unknown> {
 }
 
 export interface dataFetchType<
-    TData extends object,
-    TEvent = unknown,
     H extends Record<string, string> = Record<string, string>,
     B extends Record<string, unknown> = Record<string, unknown>,
 > {
     url: string;
     headers?: H;
     timeOut?: number;
-    extractor?: extractorType<TData, TEvent>[];
+    extractor?: extractorType[];
     onDone?: (finalData: Record<string, unknown>) => void;
     body?: B;
 }
 
-export interface serializeType<TData extends object, TEvent = unknown> {
+export interface serializeType {
     buffer: bufferControlType;
-    extractor?: extractorType<TData, TEvent>[];
+    extractor?: extractorType[];
     state: stateLocalType;
     stateLongDuration: stateLocalType;
 }
@@ -55,10 +53,10 @@ export interface timeoutType {
     bodyReader: ReadableStreamDefaultReader<Uint8Array<ArrayBufferLike>>;
 }
 
-export interface streamIaType<TData extends object, TEvent = unknown> {
+export interface streamIaType {
     body: ReadableStream<Uint8Array>;
     encodeBytes: boolean | undefined;
-    extractor?: extractorType<TData, TEvent>[];
+    extractor?: extractorType[];
     formatSSE?: boolean;
 }
 
