@@ -149,7 +149,7 @@ stream.dataFetch(config: dataFetchType): void
 | `body`      | `Record<string, unknown>` ou tipo customizado via Builder | Não         | Corpo da requisição (serializado como JSON). Configure aqui ou use um builder de provedor para autocompletar todos os campos.                              |
 | `timeOut`   | `number`                                                  | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk. Sem limite de tempo total.                                                                   |
 | `extractor` | `extractorType[]`                                         | Não         | Extratores padrão para todas as chamadas `fetchIA()`.                                                                                                      |
-| `onDone`    | `(finalData: Record<string, unknown>) => void`            | Não         | Callback disparado quando o stream termina. Recebe a resposta completa acumulada (merge de todos os chunks extraídos). Útil para salvar em banco de dados. |
+| `onDone`    | `(finalData: Record<string, unknown>) => void`            | Não         | Callback disparado quando o stream termina. Recebe `{ chunksAcumulated }` com a string SSE completa de todos os chunks. Útil para salvar em banco de dados. |
 
 ---
 
@@ -165,11 +165,12 @@ stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | object>
 | ------------- | ------------- | ----------- | ------------------------------------------------------------------------------------------------------ |
 | `method`      | `string`      | Não         | Método HTTP. Padrão: `"POST"`                                                                          |
 | `signal`      | `AbortSignal` | Não         | Sinal do AbortController para cancelamento da requisição                                               |
-| `encodeBytes` | `boolean`     | Não         | Se `true`, os chunks yieldados são `Uint8Array`. Se `false`/`undefined`, os chunks são objetos planos. |
+| `encodeBytes` | `boolean`     | Não         | Se `true`, os chunks yieldados são `Uint8Array`. Se `false`/`undefined`, os chunks são strings no formato configurado. |
+| `formatSSE`   | `boolean`     | Não         | Se `true` (padrão), saída no formato SSE (`data: {...}\n\n`). Se `false`, JSON puro.                                  |
 
 **Retorna:**
 
-- `AsyncGenerator<Record<string, unknown> | Uint8Array, void, unknown>` — se `Content-Type` for `text/event-stream`. Consuma com `for await (const chunk of generator)`.
+- `AsyncGenerator<string | Uint8Array, void, unknown>` — se `Content-Type` for `text/event-stream`. Consuma com `for await (const chunk of generator)`.
 - `object` — a resposta JSON parseada para requisições não-streaming. Se houver extratores configurados em `dataFetch()`, eles são aplicados sequencialmente sobre o JSON.
 
 **Erros:**
@@ -306,6 +307,7 @@ const generator = await stream.fetchIA();
 for await (const chunk of generator) {
     process.stdout.write(chunk.text);
 }
+```
 
 ---
 
@@ -495,7 +497,7 @@ for await (const chunk of generator) {
 }
 ```
 
-O objeto `finalData` é o spread-merge de cada chunk extraído. Sem extratores, `onDone` recebe `{}`.
+O objeto `finalData` contém `chunksAcumulated` com a string SSE completa de todos os chunks. Sem dados, `onDone` recebe `{ chunksAcumulated: "" }`.
 
 ---
 
@@ -678,6 +680,7 @@ interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
+    formatSSE?: boolean;
 }
 
 interface extractorType<TData extends object, TEvent = unknown> {
@@ -710,11 +713,11 @@ Dois estados internos rastreiam dados durante o streaming:
 | Estado              | Escopo         | Propósito                                                                                                 |
 | ------------------- | -------------- | --------------------------------------------------------------------------------------------------------- |
 | `state`             | Uma linha SSE  | Mantém `data`, `event` e `extracted` parseados para o chunk atual. Limpo após cada yield.                 |
-| `stateLongDuration` | Stream inteiro | Acumula `data` (mais recente) e `extractedLongDuration` (merge de todos os chunks). Entregue ao `onDone`. |
+| `stateLongDuration` | Stream inteiro | Acumula `data` (mais recente) e `extractedLongDuration` (merge de todos os chunks). Uso interno. |
 
 ### `[DONE]`
 
-O protocolo SSE sinaliza fim do stream com `data: [DONE]`. Quando detectado, `onDone` é chamado com `extractedLongDuration` acumulado e o generator encerra via `return`.
+O protocolo SSE sinaliza fim do stream com `data: [DONE]`. Quando detectado, `onDone` é chamado com `{ chunksAcumulated }` e o generator encerra via `return`.
 
 ### Cancelamento
 
@@ -868,7 +871,7 @@ stream.dataFetch(config: dataFetchType): void
 | `body`      | `Record<string, unknown>` or provider-specific Builder type | No       | Request body (serialized as JSON). Configure here or use a provider builder for auto-completion of all fields.                                |
 | `timeOut`   | `number`                                                    | No       | Inactivity timeout in milliseconds. Resets on each chunk. No total-time limit.                                                                |
 | `extractor` | `extractorType[]`                                           | No       | Default extractors for every `fetchIA()` call.                                                                                                |
-| `onDone`    | `(finalData: Record<string, unknown>) => void`              | No       | Callback fired when the stream ends. Receives the full accumulated response (merge of all extracted chunks). Useful for saving to a database. |
+| `onDone`    | `(finalData: Record<string, unknown>) => void`              | No       | Callback fired when the stream ends. Receives `{ chunksAcumulated }` with the full accumulated SSE string. Useful for saving to a database. |
 
 ---
 
@@ -884,11 +887,12 @@ stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | object>
 | ------------- | ------------- | -------- | --------------------------------------------------------------------------------------------- |
 | `method`      | `string`      | No       | HTTP method. Default: `"POST"`                                                                |
 | `signal`      | `AbortSignal` | No       | AbortController signal for request cancellation                                               |
-| `encodeBytes` | `boolean`     | No       | If `true`, yielded chunks are `Uint8Array`. If `false`/`undefined`, chunks are plain objects. |
+| `encodeBytes` | `boolean`     | No       | If `true`, yielded chunks are `Uint8Array`. If `false`/`undefined`, chunks are strings in the configured format. |
+| `formatSSE`   | `boolean`     | No       | If `true` (default), output is SSE-formatted (`data: {...}\n\n`). If `false`, plain JSON.                        |
 
 **Returns:**
 
-- `AsyncGenerator<Record<string, unknown> | Uint8Array, void, unknown>` — if `Content-Type` is `text/event-stream`. Consume with `for await (const chunk of generator)`.
+- `AsyncGenerator<string | Uint8Array, void, unknown>` — if `Content-Type` is `text/event-stream`. Consume with `for await (const chunk of generator)`.
 - `object` — the parsed JSON response for non-streaming requests. If extractors are configured in `dataFetch()`, they are applied sequentially over the JSON.
 
 **Errors:**
@@ -1025,6 +1029,7 @@ const generator = await stream.fetchIA();
 for await (const chunk of generator) {
     process.stdout.write(chunk.text);
 }
+```
 
 ---
 
@@ -1214,7 +1219,7 @@ for await (const chunk of generator) {
 }
 ```
 
-The `finalData` object is the spread-merge of every extracted chunk. Without extractors, `onDone` receives `{}`.
+The `finalData` object contains `chunksAcumulated` with the full accumulated SSE string. With no data, `onDone` receives `{ chunksAcumulated: "" }`.
 
 ---
 
@@ -1397,6 +1402,7 @@ interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
+    formatSSE?: boolean;
 }
 
 interface extractorType<TData extends object, TEvent = unknown> {
@@ -1429,11 +1435,11 @@ Two internal states track data during streaming:
 | State               | Scope         | Purpose                                                                                                    |
 | ------------------- | ------------- | ---------------------------------------------------------------------------------------------------------- |
 | `state`             | One SSE line  | Holds the parsed `data`, `event`, and `extracted` for the current chunk. Cleared after each yield.         |
-| `stateLongDuration` | Entire stream | Accumulates `data` (latest) and `extractedLongDuration` (merged across all chunks). Delivered to `onDone`. |
+| `stateLongDuration` | Entire stream | Accumulates `data` (latest) and `extractedLongDuration` (merged across all chunks). Used internally. |
 
 ### `[DONE]`
 
-The SSE protocol signals end-of-stream with `data: [DONE]`. When detected, `onDone` is called with the accumulated `extractedLongDuration`, and the generator exits via `return`.
+The SSE protocol signals end-of-stream with `data: [DONE]`. When detected, `onDone` is called with `{ chunksAcumulated }`, and the generator exits via `return`.
 
 ### Cancellation
 
