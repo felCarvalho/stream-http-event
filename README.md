@@ -129,7 +129,7 @@ pnpm add @felipe-lib/stream-http-event
 1. `dataFetch()` — configura a instância (URL, headers, body, timeout, extratores, callback `onDone`). Chame uma vez.
 2. `fetchIA()` — executa a requisição. Retorna um `AsyncGenerator` (se a resposta for `text/event-stream`) ou um objeto JSON parseado (fallback para não-streaming).
 
-**Extratores** são funções `({ data, event? }) => Record<string, unknown>` que mapeiam os dados para o formato desejado. Os extratores são aplicados apenas no fallback não-streaming, sequencialmente sobre o JSON parseado (sem `event`). No streaming, a saída é a string SSE crua — os extratores não têm efeito sobre o que é yieldado.
+**Extratores** são funções `({ data, event? }) => Record<string, unknown>` que mapeiam os dados para o formato desejado. No streaming, os extratores processam cada chunk antes do yield, transformando os dados conforme a função `fn`. No fallback não-streaming, os extratores são aplicados sequencialmente sobre o JSON parseado (sem `event`).
 
 ---
 
@@ -148,7 +148,7 @@ stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 | `url`       | `string`                                                  | Sim         | Endpoint do provedor de IA                                                                                                                                 |
 | `headers`   | `Record<string, string>` ou tipo customizado via Builder  | Não         | Headers HTTP (Authorization, Content-Type, etc.). Pode ser tipado automaticamente ao usar um builder de provedor.                                          |
 | `timeOut`   | `number`                                                  | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk. Sem limite de tempo total.                                                                   |
-| `extractor` | `extractorType[]`                                         | Não         | Extratores padrão para todas as chamadas `fetchIA()`. **Só têm efeito no fallback não-streaming.**                                                         |
+| `extractor` | `extractorType[]`                                         | Não         | Extratores padrão para todas as chamadas `fetchIA()`. Processam dados tanto no streaming quanto no fallback não-streaming.                                                         |
 | `onDone`    | `(finalData: Record<string, unknown>) => void`            | Não         | Callback disparado quando o **stream** termina (apenas modo streaming). Recebe `{ chunksAcumulated }` com a string SSE completa. Útil para salvar em banco de dados. |
 | `body`      | `Record<string, unknown>` ou tipo customizado via Builder | Não         | Corpo da requisição (serializado como JSON). Configure aqui ou use um builder de provedor para autocompletar todos os campos.                              |
 
@@ -159,7 +159,7 @@ stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 Executa a requisição HTTP e retorna um `AsyncGenerator` ou um objeto JSON parseado.
 
 ```typescript
-stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | object>
+stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, unknown>>
 ```
 
 | Parâmetro     | Tipo          | Obrigatório | Descrição                                                                                              |
@@ -201,7 +201,7 @@ type extractorType<TData extends object = Record<string, unknown>, TEvent = stri
 **Comportamento:**
 
 - `event` é **opcional** — ausente em respostas JSON não-streaming. Quando presente, é uma string (ex: `"ping"`, `"content_block_delta"`).
-- **Streaming:** a saída é formatada como string SSE (`data: {...}\nevent: ...\n\n`) ou, se `formatSSE: false`, como string com `\n\n` no final. Os dados acumulados de todo o stream são entregues ao `onDone` como `{ chunksAcumulated }`. Os extratores **não** têm efeito no streaming.
+- **Streaming:** a saída são os dados processados pelos extratores, formatados como string SSE (`data: {...}\nevent: ...\n\n`) ou, se `formatSSE: false`, como string com `\n\n` no final. Os dados acumulados de todo o stream são entregues ao `onDone` como `{ chunksAcumulated }`.
 - **JSON (não-streaming):** todos os extratores são aplicados em sequência. O retorno `{}` alimenta o próximo extrator com o objeto vazio.
 
 
@@ -705,7 +705,7 @@ interface extractorType<TData extends object = Record<string, unknown>, TEvent =
 
 ### Buffer
 
-Chunks de rede podem chegar em tamanhos arbitrários, dividindo linhas SSE no meio. O buffer acumula bytes recebidos e só processa linhas completas (terminadas com `\n`). Fragmentos incompletos são mantidos até o próximo chunk chegar.
+Chunks de rede podem chegar em tamanhos arbitrários, dividindo mensagens SSE no meio. O buffer acumula bytes recebidos e só processa mensagens completas (terminadas com `\n\n`). Fragmentos incompletos são mantidos até o próximo chunk chegar.
 
 ### Timeout
 
@@ -717,12 +717,12 @@ Dois estados internos rastreiam dados durante o streaming:
 
 | Estado              | Escopo         | Propósito                                                                                                 |
 | ------------------- | -------------- | --------------------------------------------------------------------------------------------------------- |
-| `state`             | Uma linha SSE  | Mantém `data` e `event` parseados para o chunk atual. Limpo após cada yield.                 |
+| `state`             | Uma mensagem SSE | Mantém `data` e `event` parseados para o chunk atual. Limpo após cada yield.                 |
 | `stateLongDuration` | Stream inteiro | Acumula `data` do chunk mais recente. Uso interno. |
 
 ### `[DONE]`
 
-O protocolo SSE sinaliza fim do stream com `data: [DONE]`. Quando detectado, `onDone` é chamado com `{ chunksAcumulated }` (se houver dados) e o generator encerra via `return`.
+O protocolo SSE sinaliza fim do stream com `data: [DONE]`. Quando detectado, `onDone` é chamado com `{ chunksAcumulated }` (se houver dados) e o generator encerra via `return`. `onDone` também é chamado no fim natural do stream (quando o `bodyReader` indica `done: true`).
 
 > **Atenção:** A detecção usa correspondência exata (`===`). `data:[DONE]` sem espaço ou `data: [DONE]\r` (CR) **não** são reconhecidos. Valores SSE `data:` com conteúdo JSON falsy (`0`, `false`, `""`, `null`) são ignorados e não geram saída.
 
@@ -860,7 +860,7 @@ pnpm add @felipe-lib/stream-http-event
 1. `dataFetch()` — configure the instance (URL, headers, body, timeout, extractors, `onDone` callback). Call once.
 2. `fetchIA()` — execute the request. Returns an `AsyncGenerator` (if the response is `text/event-stream`) or a parsed JSON object (fallback for non-streaming).
 
-**Extractors** are functions `({ data, event? }) => Record<string, unknown>` that map data into the shape you want. Extractors are only applied in the non-streaming fallback, sequentially over the parsed JSON (no `event`). In streaming, the output is the raw SSE string — extractors have no effect on what is yielded.
+**Extractors** are functions `({ data, event? }) => Record<string, unknown>` that map data into the shape you want. In streaming, extractors process each chunk before yielding, transforming the data via the `fn` function. In the non-streaming fallback, extractors are applied sequentially over the parsed JSON (no `event`).
 
 ---
 
@@ -879,7 +879,7 @@ stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 | `url`       | `string`                                                    | Yes      | AI provider endpoint                                                                                                                          |
 | `headers`   | `Record<string, string>` or provider-specific Builder type  | No       | HTTP headers (Authorization, Content-Type, etc.). Automatically typed when using a provider builder.                                          |
 | `timeOut`   | `number`                                                    | No       | Inactivity timeout in milliseconds. Resets on each chunk. No total-time limit.                                                                |
-| `extractor` | `extractorType[]`                                           | No       | Default extractors for every `fetchIA()` call. **Only effective in non-streaming fallback.**                                                   |
+| `extractor` | `extractorType[]`                                           | No       | Default extractors for every `fetchIA()` call. Process data in both streaming and non-streaming fallback.                                                   |
 | `onDone`    | `(finalData: Record<string, unknown>) => void`              | No       | Callback fired when the **stream** ends (streaming mode only). Receives `{ chunksAcumulated }` with the full accumulated SSE string. Useful for saving to a database. |
 | `body`      | `Record<string, unknown>` or provider-specific Builder type | No       | Request body (serialized as JSON). Configure here or use a provider builder for auto-completion of all fields.                                |
 
@@ -890,7 +890,7 @@ stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 Executes the HTTP request and returns either an `AsyncGenerator` or a parsed JSON object.
 
 ```typescript
-stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | object>
+stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, unknown>>
 ```
 
 | Parameter     | Type          | Required | Description                                                                                   |
@@ -932,7 +932,7 @@ type extractorType<TData extends object = Record<string, unknown>, TEvent = stri
 **Behavior:**
 
 - `event` is **optional** — absent in non-streaming JSON responses. When present, it's a string (e.g. `"ping"`, `"content_block_delta"`).
-- **Streaming:** output is formatted as an SSE string (`data: {...}\nevent: ...\n\n`) or, if `formatSSE: false`, as a string with trailing `\n\n`. All stream data accumulated is delivered to `onDone` as `{ chunksAcumulated }`. Extractors have **no effect** in streaming.
+- **Streaming:** output is the data processed by extractors, formatted as an SSE string (`data: {...}\nevent: ...\n\n`) or, if `formatSSE: false`, as a string with trailing `\n\n`. All stream data accumulated is delivered to `onDone` as `{ chunksAcumulated }`.
 - **JSON (non-streaming):** all extractors are applied in sequence. Returning `{}` feeds an empty object to the next extractor.
 
 ---
@@ -1435,7 +1435,7 @@ interface extractorType<TData extends object = Record<string, unknown>, TEvent =
 
 ### Buffer
 
-Network chunks may arrive in arbitrary sizes, splitting SSE lines mid-way. The buffer accumulates incoming bytes and only processes full lines (ending with `\n`). Incomplete fragments are held until the next chunk arrives.
+Network chunks may arrive in arbitrary sizes, splitting SSE messages mid-way. The buffer accumulates incoming bytes and only processes full messages (ending with `\n\n`). Incomplete fragments are held until the next chunk arrives.
 
 ### Timeout
 
@@ -1447,12 +1447,12 @@ Two internal states track data during streaming:
 
 | State               | Scope         | Purpose                                                                                                    |
 | ------------------- | ------------- | ---------------------------------------------------------------------------------------------------------- |
-| `state`             | One SSE line  | Holds the parsed `data` and `event` for the current chunk. Cleared after each yield.         |
+| `state`               | One SSE message | Holds the parsed `data` and `event` for the current chunk. Cleared after each yield.         |
 | `stateLongDuration` | Entire stream | Accumulates the latest `data` chunk. Used internally. |
 
 ### `[DONE]`
 
-The SSE protocol signals end-of-stream with `data: [DONE]`. When detected, `onDone` is called with `{ chunksAcumulated }` (if data was accumulated), and the generator exits via `return`.
+The SSE protocol signals end-of-stream with `data: [DONE]`. When detected, `onDone` is called with `{ chunksAcumulated }` (if data was accumulated), and the generator exits via `return`. `onDone` is also called on natural stream end (when `bodyReader` signals `done: true`).
 
 > **Caution:** Detection uses strict equality (`===`). `data:[DONE]` (no space) or `data: [DONE]\r` (CR) are **not** recognized. SSE `data:` values with falsy JSON content (`0`, `false`, `""`, `null`) are silently skipped and do not produce output.
 
