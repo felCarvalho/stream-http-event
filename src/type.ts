@@ -59,10 +59,12 @@ export interface streamIaType<TData extends object, TEvent = unknown> {
     body: ReadableStream<Uint8Array>;
     encodeBytes: boolean | undefined;
     extractor?: extractorType<TData, TEvent>[];
+    formatSSE?: boolean;
 }
 
 export interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
+    formatSSE?: boolean;
 }

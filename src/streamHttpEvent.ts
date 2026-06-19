@@ -134,14 +134,8 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
 
             if (extractor.length && (data || event)) {
                 for (const extItem of extractor) {
-                    state.setState({
-                        extracted: extItem.fn({
-                            data,
-                            event,
-                        }),
-                    });
-                    state.clearStateByKey("data");
-                    state.clearStateByKey("event");
+                    state.setState({ event: JSON.parse(clear) });
+                    state.setState({ data: JSON.parse(clear) });
                 }
             }
         }
@@ -153,51 +147,36 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
         state,
         stateLongDuration,
     }: serializeType<TData, TEvent>) {
-        const lines = buffer.getBuffer().split("\n");
+        const lines = buffer.getBuffer().split("\n\n");
         buffer.setBuffer(lines.pop() ?? "");
 
-        for (const line of lines) {
-            const trimmed = line.trim();
+        for (const message of lines) {
+            const trimmedEvent = message.trim().split("\n");
 
-            if (trimmed === "data: [DONE]") {
-                return trimmed;
-            }
+            for (const lineForLine of trimmedEvent) {
+                if (lineForLine === "data: [DONE]") {
+                    return lineForLine;
+                }
 
-            if (trimmed.startsWith("data:")) {
-                this.parseAndExtracted({
-                    line: trimmed,
-                    state,
-                    extractor: extractor ?? [],
-                    eventName: "data",
-                });
-                const data = state.getStateOne("data") as TData;
-                stateLongDuration.setState({ data });
-            }
+                if (lineForLine.startsWith("data:")) {
+                    this.parseAndExtracted({
+                        line: lineForLine,
+                        state,
+                        extractor: extractor ?? [],
+                        eventName: "data",
+                    });
+                    const data = state.getStateOne("data") as TData;
+                    stateLongDuration.setState({ data });
+                }
 
-            if (trimmed.startsWith("event:")) {
-                this.parseAndExtracted({
-                    line: trimmed,
-                    state,
-                    extractor: extractor ?? [],
-                    eventName: "event",
-                });
-            }
-
-            if (state.hasStateByKey("extracted")) {
-                const extracted = state.getStateOne("extracted") as Record<
-                    string,
-                    any
-                >;
-                const extractedLongDuration = stateLongDuration.getStateOne(
-                    "extractedLongDuration",
-                ) as Record<string, any>;
-
-                stateLongDuration.setState({
-                    extractedLongDuration: {
-                        ...extractedLongDuration,
-                        ...extracted,
-                    },
-                });
+                if (lineForLine.startsWith("event:")) {
+                    this.parseAndExtracted({
+                        line: lineForLine,
+                        state,
+                        extractor: extractor ?? [],
+                        eventName: "event",
+                    });
+                }
             }
         }
 
@@ -208,6 +187,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
         body,
         encodeBytes,
         extractor,
+        formatSSE,
     }: streamIaType<TData, TEvent>) {
         const bodyReader = body.getReader();
         const buffer = this.bufferControl();
@@ -216,12 +196,18 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
         const stateLongDuration = this.stateLocal();
         const decoder: TextDecoder = new TextDecoder();
         const encoder: TextEncoder = new TextEncoder();
+        let chunksAcumulated = "";
 
         try {
             while (true) {
                 const { done, value } = await bodyReader.read();
 
                 if (done) {
+                    if (chunksAcumulated) {
+                        this.onDone
+                            ? this.onDone({ chunksAcumulated })
+                            : (this.onDone = undefined);
+                    }
                     break;
                 }
 
@@ -237,27 +223,56 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
                 this.timeout({ timeOutId, bodyReader });
 
                 if (serialized === "data: [DONE]") {
-                    break;
+                    if (chunksAcumulated) {
+                        this.onDone
+                            ? this.onDone({ chunksAcumulated })
+                            : (this.onDone = undefined);
+                    }
+                    return;
                 }
 
-                const extracted = state.getStateOne("extracted");
-                if (!extracted) continue;
+                const extractedData =
+                    state.getStateOne("data") ??
+                    "nenhum dado foi extraido de data";
+                const extractedEvent =
+                    state.getStateOne("event") ??
+                    "nenhum dado foi extraido de event";
+                if (!extractedData) continue;
 
-                if (encodeBytes) {
-                    yield encoder.encode(JSON.stringify(extracted));
+                let traficChunk = "";
+
+                if (formatSSE) {
+                    if (extractedData)
+                        traficChunk += `data: ${JSON.stringify(extractedData)}\n`;
+
+                    if (extractedEvent)
+                        traficChunk += `event: ${extractedEvent}\n`;
+
+                    if (traficChunk) {
+                        traficChunk += "\n";
+                        chunksAcumulated += traficChunk;
+                    }
                 } else {
-                    yield extracted;
+                    if (extractedData)
+                        traficChunk += `${JSON.stringify(extractedData)}\n`;
+
+                    if (extractedEvent) traficChunk += `${extractedEvent}\n`;
+
+                    if (traficChunk) {
+                        traficChunk += "\n";
+                        chunksAcumulated += traficChunk;
+                    }
                 }
 
-                state.clearStateByKey("extracted");
+                if (traficChunk) {
+                    yield encodeBytes
+                        ? encoder.encode(traficChunk)
+                        : traficChunk;
+                }
+
                 state.clearStateByKey("data");
                 state.clearStateByKey("event");
             }
-
-            const extractedLongDuration = stateLongDuration.getStateOne(
-                "extractedLongDuration",
-            ) as Record<string, unknown>;
-            this.onDone?.(extractedLongDuration);
         } catch (e: unknown) {
             throw e;
         } finally {
@@ -266,7 +281,12 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
         }
     }
 
-    public async fetchIA({ encodeBytes, signal, method }: FetchOptions) {
+    public async fetchIA({
+        encodeBytes,
+        signal,
+        method,
+        formatSSE = true,
+    }: FetchOptions) {
         if (!this.url) {
             throw new Error("dataFetch() precisa da url do seu provedor de IA");
         }
@@ -291,6 +311,7 @@ export class StreamHttpEvent<TData extends object, TEvent = unknown> {
         if (contentType?.includes("text/event-stream")) {
             return this.streamIA({
                 body: fetcher.body,
+                formatSSE,
                 encodeBytes,
                 extractor: this.extractor ?? [],
             });
