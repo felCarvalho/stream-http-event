@@ -1,6 +1,6 @@
 # @felipe-lib/stream-http-event
 
-[![npm version](https://img.shields.io/badge/npm-v1.5.3-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
+[![npm version](https://img.shields.io/badge/npm-v1.5.5-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
 [![license](https://img.shields.io/badge/license-ISC-green)](./LICENSE)
 
 **Zero dependências em runtime.** Consuma respostas HTTP em streaming de provedores de IA (OpenAI, Anthropic, Groq, DeepSeek, etc.) via o protocolo [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
@@ -21,7 +21,8 @@ Funciona em qualquer runtime com `fetch`, `AsyncGenerator`, `TextDecoder` e `Tex
     - [`fetchIA()`](#fetchia)
     - [`extractorType`](#extractortype)
 - [Guias](#guias)
-    - [Streaming Básico (OpenAI / Groq)](#streaming-básico-openai--groq)
+    - [Streaming Básico (OpenAI)](#streaming-básico-openai)
+    - [Provedores OpenAI-compatíveis](#provedores-openai-compatíveis-groq-together-ai-fireworks-)
 - [Extratores por Provedor (Anthropic)](#extratores-por-provedor-anthropic)
 - [Builders por Provedor (DeepSeek)](#builders-por-provedor-deepseek)
     - [Builders por Provedor (Anthropic)](#builders-por-provedor-anthropic)
@@ -65,9 +66,9 @@ stream.dataFetch({
 // 2. Requisitar
 const generator = await stream.fetchIA();
 
-// 3. Ler
+// 3. Ler (chunk é string no formato `data: {...}\n\n`)
 for await (const chunk of generator) {
-    process.stdout.write(chunk.content);
+    process.stdout.write(chunk);
 }
 ```
 
@@ -103,7 +104,7 @@ stream.dataFetch({
 const generator = await stream.fetchIA();
 
 for await (const chunk of generator) {
-    process.stdout.write(chunk.content);
+    process.stdout.write(chunk);
 }
 ```
 
@@ -128,7 +129,7 @@ pnpm add @felipe-lib/stream-http-event
 1. `dataFetch()` — configura a instância (URL, headers, body, timeout, extratores, callback `onDone`). Chame uma vez.
 2. `fetchIA()` — executa a requisição. Retorna um `AsyncGenerator` (se a resposta for `text/event-stream`) ou um objeto JSON parseado (fallback para não-streaming).
 
-**Extratores** são funções `({ data, event? }) => Record<string, unknown>` que mapeiam os dados para o formato desejado. No streaming, cada chunk SSE é processado. No fallback JSON (não-streaming), os extratores são aplicados sequencialmente sobre o JSON parseado (sem `event`). Sem extratores, nada é enviado ao generator. Com extratores, cada chunk se torna o que sua função retornar.
+**Extratores** são funções `({ data, event? }) => Record<string, unknown>` que mapeiam os dados para o formato desejado. Os extratores são aplicados apenas no fallback não-streaming, sequencialmente sobre o JSON parseado (sem `event`). No streaming, a saída é a string SSE crua — os extratores não têm efeito sobre o que é yieldado.
 
 ---
 
@@ -139,17 +140,17 @@ pnpm add @felipe-lib/stream-http-event
 Configura a instância. Deve ser chamado antes de `fetchIA()`.
 
 ```typescript
-stream.dataFetch(config: dataFetchType): void
+stream.dataFetch<H, B>(config: dataFetchType<TData, TEvent, H, B>): void
 ```
 
 | Parâmetro   | Tipo                                                      | Obrigatório | Descrição                                                                                                                                                  |
 | ----------- | --------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `url`       | `string`                                                  | Sim         | Endpoint do provedor de IA                                                                                                                                 |
 | `headers`   | `Record<string, string>` ou tipo customizado via Builder  | Não         | Headers HTTP (Authorization, Content-Type, etc.). Pode ser tipado automaticamente ao usar um builder de provedor.                                          |
-| `body`      | `Record<string, unknown>` ou tipo customizado via Builder | Não         | Corpo da requisição (serializado como JSON). Configure aqui ou use um builder de provedor para autocompletar todos os campos.                              |
 | `timeOut`   | `number`                                                  | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk. Sem limite de tempo total.                                                                   |
-| `extractor` | `extractorType[]`                                         | Não         | Extratores padrão para todas as chamadas `fetchIA()`.                                                                                                      |
-| `onDone`    | `(finalData: Record<string, unknown>) => void`            | Não         | Callback disparado quando o stream termina. Recebe `{ chunksAcumulated }` com a string SSE completa de todos os chunks. Útil para salvar em banco de dados. |
+| `extractor` | `extractorType[]`                                         | Não         | Extratores padrão para todas as chamadas `fetchIA()`. **Só têm efeito no fallback não-streaming.**                                                         |
+| `onDone`    | `(finalData: Record<string, unknown>) => void`            | Não         | Callback disparado quando o **stream** termina (apenas modo streaming). Recebe `{ chunksAcumulated }` com a string SSE completa. Útil para salvar em banco de dados. |
+| `body`      | `Record<string, unknown>` ou tipo customizado via Builder | Não         | Corpo da requisição (serializado como JSON). Configure aqui ou use um builder de provedor para autocompletar todos os campos.                              |
 
 ---
 
@@ -166,7 +167,7 @@ stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | object>
 | `method`      | `string`      | Não         | Método HTTP. Padrão: `"POST"`                                                                          |
 | `signal`      | `AbortSignal` | Não         | Sinal do AbortController para cancelamento da requisição                                               |
 | `encodeBytes` | `boolean`     | Não         | Se `true`, os chunks yieldados são `Uint8Array`. Se `false`/`undefined`, os chunks são strings no formato configurado. |
-| `formatSSE`   | `boolean`     | Não         | Se `true` (padrão), saída no formato SSE (`data: {...}\n\n`). Se `false`, JSON puro.                                  |
+| `formatSSE`   | `boolean`     | Não         | Se `true` (padrão), saída no formato SSE (`data: {...}\n\n`). Se `false`, string do dado com `\n\n` no final.         |
 
 **Retorna:**
 
@@ -200,15 +201,15 @@ type extractorType<TData extends object, TEvent = unknown> = {
 **Comportamento:**
 
 - `event` é **opcional** — ausente em respostas JSON não-streaming.
-- Se sua função retornar `{}` (vazio), nada é enviado para aquele chunk.
-- **Streaming:** múltiplos extratores rodam sequencialmente por linha. O resultado do **último** extrator determina o que é yieldado. Valores se acumulam em `extractedLongDuration` via spread merge (`{ ...antigo, ...novo }`) e são entregues ao `onDone` quando o stream encerra.
-- **JSON (não-streaming):** todos os extratores são aplicados em sequência, e o resultado de cada um alimenta o `data` do próximo. O resultado final é retornado diretamente (não passa por `extractedLongDuration` nem `onDone`).
+- **Streaming:** a saída é formatada como string SSE (`data: {...}\nevent: ...\n\n`) ou, se `formatSSE: false`, como string com `\n\n` no final. Os dados acumulados de todo o stream são entregues ao `onDone` como `{ chunksAcumulated }`. Os extratores **não** têm efeito no streaming.
+- **JSON (não-streaming):** todos os extratores são aplicados em sequência. O retorno `{}` alimenta o próximo extrator com o objeto vazio.
+
 
 ---
 
 ## Guias
 
-### Streaming Básico (OpenAI / Groq)
+### Streaming Básico (OpenAI)
 
 ```typescript
 const stream = new StreamHttpEvent();
@@ -238,11 +239,17 @@ stream.dataFetch({
 const generator = await stream.fetchIA();
 
 for await (const chunk of generator) {
-    process.stdout.write(chunk.content);
+    process.stdout.write(chunk);
 }
 ```
 
-O Groq segue o mesmo padrão — usa API compatível com OpenAI:
+---
+
+### Provedores OpenAI-compatíveis (Groq, Together AI, Fireworks, ...)
+
+Qualquer provedor que siga o formato `{ messages, model, stream, temperature, ... }` funciona com esta biblioteca — basta trocar a URL e os headers de autenticação.
+
+**Groq:**
 
 ````typescript
 stream.dataFetch({
@@ -265,11 +272,30 @@ stream.dataFetch({
 
 const generator = await stream.fetchIA();
 for await (const chunk of generator) {
-    process.stdout.write(chunk.content);
+    process.stdout.write(chunk);
 }
 ```
 
-> **Dica:** O Groq também pode usar os [builders do DeepSeek](#builders-por-provedor-deepseek) — o formato do body é o mesmo (OpenAI-compatível). Só troque a URL.
+**DeepSeek, Together AI, Fireworks, Perplexity, xAI:**
+
+Os [builders do DeepSeek](#builders-por-provedor-deepseek) funcionam com qualquer provedor OpenAI-compatível — basta trocar a URL no `dataFetch()`. Exemplo:
+
+```typescript
+stream.dataFetch({
+    url: "https://api.together.xyz/v1/chat/completions", // ou Groq, Fireworks, etc.
+    headers: new DeepSeekHeadersBuilder().apiKey("sk-seu-token").build(),
+    body: new DeepSeekBodyBuilder()
+        .model("mistralai/Mixtral-8x7B-Instruct-v0.1")
+        .messages([new DeepSeekMessageBuilder().role("user").content("Olá").build()])
+        .stream(true)
+        .build(),
+    extractor: [{
+        fn: ({ data }) => ({ content: data.choices?.[0]?.delta?.content ?? "" })
+    }],
+});
+```
+
+> **Compatível com:** Groq, Together AI, Fireworks, Perplexity, xAI, DeepSeek, e qualquer API que use o formato `{ messages, model, stream, ... }`. Apenas ajuste a URL e a chave de API.
 
 ---
 
@@ -305,7 +331,7 @@ stream.dataFetch({
 
 const generator = await stream.fetchIA();
 for await (const chunk of generator) {
-    process.stdout.write(chunk.text);
+    process.stdout.write(chunk);
 }
 ```
 
@@ -361,7 +387,7 @@ stream.dataFetch({
 
 const generator = await stream.fetchIA();
 for await (const chunk of generator) {
-    process.stdout.write(chunk.content);
+    process.stdout.write(chunk);
 }
 ````
 
@@ -410,7 +436,7 @@ stream.dataFetch({
 
 const generator = await stream.fetchIA();
 for await (const chunk of generator) {
-    process.stdout.write(chunk.text);
+    process.stdout.write(chunk);
 }
 ```
 
@@ -449,7 +475,7 @@ for await (const chunk of generator) {
 }
 ```
 
-Quando o consumidor cancela via `break` ou `AbortSignal`, o `bodyReader` interno é cancelado e o timeout de inatividade é limpo automaticamente via bloco `finally`.
+Quando o consumidor cancela via `break` ou `AbortSignal`, o lock do `bodyReader` é liberado (`releaseLock`) e o timeout de inatividade é limpo automaticamente via bloco `finally`.
 
 ---
 
@@ -486,18 +512,18 @@ stream.dataFetch({
     ],
     onDone: (finalData) => {
         console.log("Resposta completa:", finalData);
-        // await db.messages.update({ response: finalData.content });
+        // finalData.chunksAcumulated contém a string SSE completa
     },
 });
 
 const generator = await stream.fetchIA();
 
 for await (const chunk of generator) {
-    process.stdout.write(chunk.content);
+    process.stdout.write(chunk);
 }
 ```
 
-O objeto `finalData` contém `chunksAcumulated` com a string SSE completa de todos os chunks. Sem dados, `onDone` recebe `{ chunksAcumulated: "" }`.
+O objeto `finalData` contém `chunksAcumulated` com a string SSE completa de todos os chunks. Se nenhum dado foi acumulado (stream vazio), `onDone` não é chamado.
 
 ---
 
@@ -670,10 +696,10 @@ interface dataFetchType<
 > {
     url: string;
     headers?: H;
-    body?: B;
     timeOut?: number;
     extractor?: extractorType<TData, TEvent>[];
     onDone?: (finalData: Record<string, unknown>) => void;
+    body?: B;
 }
 
 interface FetchOptions {
@@ -712,12 +738,16 @@ Dois estados internos rastreiam dados durante o streaming:
 
 | Estado              | Escopo         | Propósito                                                                                                 |
 | ------------------- | -------------- | --------------------------------------------------------------------------------------------------------- |
-| `state`             | Uma linha SSE  | Mantém `data`, `event` e `extracted` parseados para o chunk atual. Limpo após cada yield.                 |
-| `stateLongDuration` | Stream inteiro | Acumula `data` (mais recente) e `extractedLongDuration` (merge de todos os chunks). Uso interno. |
+| `state`             | Uma linha SSE  | Mantém `data` e `event` parseados para o chunk atual. Limpo após cada yield.                 |
+| `stateLongDuration` | Stream inteiro | Acumula `data` do chunk mais recente. Uso interno. |
 
 ### `[DONE]`
 
-O protocolo SSE sinaliza fim do stream com `data: [DONE]`. Quando detectado, `onDone` é chamado com `{ chunksAcumulated }` e o generator encerra via `return`.
+O protocolo SSE sinaliza fim do stream com `data: [DONE]`. Quando detectado, `onDone` é chamado com `{ chunksAcumulated }` (se houver dados) e o generator encerra via `return`.
+
+> **Atenção:** A detecção usa correspondência exata (`===`). `data:[DONE]` sem espaço ou `data: [DONE]\r` (CR) **não** são reconhecidos. Valores SSE `data:` com conteúdo JSON falsy (`0`, `false`, `""`, `null`) são ignorados e não geram saída.
+
+> **Eventos:** O campo `event:` do SSE é interpretado como JSON. `event: ping` (string simples sem aspas) lançará um erro. Valores de `event` que são objetos serão convertidos para `[object Object]` na saída formatada.
 
 ### Cancelamento
 
@@ -743,7 +773,8 @@ ISC
     - [`fetchIA()`](#fetchia-1)
     - [`extractorType`](#extractortype-1)
 - [Guides](#guides-1)
-    - [Basic Streaming (OpenAI / Groq)](#basic-streaming-openai--groq)
+    - [Basic Streaming (OpenAI)](#basic-streaming-openai)
+    - [OpenAI-Compatible Providers](#openai-compatible-providers-groq-together-ai-fireworks-)
 - [Per-Provider Extractors (Anthropic)](#per-provider-extractors-anthropic)
 - [Per-Provider Builders (DeepSeek)](#per-provider-builders-deepseek)
     - [Per-Provider Builders (Anthropic)](#per-provider-builders-anthropic)
@@ -787,9 +818,9 @@ stream.dataFetch({
 // 2. Request
 const generator = await stream.fetchIA();
 
-// 3. Read
+// 3. Read (chunk is a string in `data: {...}\n\n` format)
 for await (const chunk of generator) {
-    process.stdout.write(chunk.content);
+    process.stdout.write(chunk);
 }
 ```
 
@@ -825,7 +856,7 @@ stream.dataFetch({
 const generator = await stream.fetchIA();
 
 for await (const chunk of generator) {
-    process.stdout.write(chunk.content);
+    process.stdout.write(chunk);
 }
 ```
 
@@ -850,7 +881,7 @@ pnpm add @felipe-lib/stream-http-event
 1. `dataFetch()` — configure the instance (URL, headers, body, timeout, extractors, `onDone` callback). Call once.
 2. `fetchIA()` — execute the request. Returns an `AsyncGenerator` (if the response is `text/event-stream`) or a parsed JSON object (fallback for non-streaming).
 
-**Extractors** are functions `({ data, event? }) => Record<string, unknown>` that map data into the shape you want. In streaming mode, each SSE chunk is processed. In JSON fallback (non-streaming), extractors are applied sequentially over the parsed JSON (no `event`). Without extractors, nothing is yielded to the generator. With extractors, each chunk becomes whatever your function returns.
+**Extractors** are functions `({ data, event? }) => Record<string, unknown>` that map data into the shape you want. Extractors are only applied in the non-streaming fallback, sequentially over the parsed JSON (no `event`). In streaming, the output is the raw SSE string — extractors have no effect on what is yielded.
 
 ---
 
@@ -861,17 +892,17 @@ pnpm add @felipe-lib/stream-http-event
 Configures the instance. Must be called before `fetchIA()`.
 
 ```typescript
-stream.dataFetch(config: dataFetchType): void
+stream.dataFetch<H, B>(config: dataFetchType<TData, TEvent, H, B>): void
 ```
 
 | Parameter   | Type                                                        | Required | Description                                                                                                                                   |
 | ----------- | ----------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
 | `url`       | `string`                                                    | Yes      | AI provider endpoint                                                                                                                          |
 | `headers`   | `Record<string, string>` or provider-specific Builder type  | No       | HTTP headers (Authorization, Content-Type, etc.). Automatically typed when using a provider builder.                                          |
-| `body`      | `Record<string, unknown>` or provider-specific Builder type | No       | Request body (serialized as JSON). Configure here or use a provider builder for auto-completion of all fields.                                |
 | `timeOut`   | `number`                                                    | No       | Inactivity timeout in milliseconds. Resets on each chunk. No total-time limit.                                                                |
-| `extractor` | `extractorType[]`                                           | No       | Default extractors for every `fetchIA()` call.                                                                                                |
-| `onDone`    | `(finalData: Record<string, unknown>) => void`              | No       | Callback fired when the stream ends. Receives `{ chunksAcumulated }` with the full accumulated SSE string. Useful for saving to a database. |
+| `extractor` | `extractorType[]`                                           | No       | Default extractors for every `fetchIA()` call. **Only effective in non-streaming fallback.**                                                   |
+| `onDone`    | `(finalData: Record<string, unknown>) => void`              | No       | Callback fired when the **stream** ends (streaming mode only). Receives `{ chunksAcumulated }` with the full accumulated SSE string. Useful for saving to a database. |
+| `body`      | `Record<string, unknown>` or provider-specific Builder type | No       | Request body (serialized as JSON). Configure here or use a provider builder for auto-completion of all fields.                                |
 
 ---
 
@@ -888,7 +919,7 @@ stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | object>
 | `method`      | `string`      | No       | HTTP method. Default: `"POST"`                                                                |
 | `signal`      | `AbortSignal` | No       | AbortController signal for request cancellation                                               |
 | `encodeBytes` | `boolean`     | No       | If `true`, yielded chunks are `Uint8Array`. If `false`/`undefined`, chunks are strings in the configured format. |
-| `formatSSE`   | `boolean`     | No       | If `true` (default), output is SSE-formatted (`data: {...}\n\n`). If `false`, plain JSON.                        |
+| `formatSSE`   | `boolean`     | No       | If `true` (default), output is SSE-formatted (`data: {...}\n\n`). If `false`, raw data string with trailing `\n\n`. |
 
 **Returns:**
 
@@ -922,15 +953,14 @@ type extractorType<TData extends object, TEvent = unknown> = {
 **Behavior:**
 
 - `event` is **optional** — absent in non-streaming JSON responses.
-- If your function returns `{}` (empty), nothing is yielded for that chunk.
-- **Streaming:** multiple extractors run sequentially per line. The **last** extractor's result determines what gets yielded. Values accumulate in `extractedLongDuration` via spread merge (`{ ...old, ...new }`) and are delivered to `onDone` when the stream ends.
-- **JSON (non-streaming):** all extractors are applied in sequence, each result feeding the next one's `data`. The final result is returned directly (does not go through `extractedLongDuration` or `onDone`).
+- **Streaming:** output is formatted as an SSE string (`data: {...}\nevent: ...\n\n`) or, if `formatSSE: false`, as a string with trailing `\n\n`. All stream data accumulated is delivered to `onDone` as `{ chunksAcumulated }`. Extractors have **no effect** in streaming.
+- **JSON (non-streaming):** all extractors are applied in sequence. Returning `{}` feeds an empty object to the next extractor.
 
 ---
 
 ## Guides
 
-### Basic Streaming (OpenAI / Groq)
+### Basic Streaming (OpenAI)
 
 ```typescript
 const stream = new StreamHttpEvent();
@@ -960,11 +990,17 @@ stream.dataFetch({
 const generator = await stream.fetchIA();
 
 for await (const chunk of generator) {
-    process.stdout.write(chunk.content);
+    process.stdout.write(chunk);
 }
 ```
 
-Groq follows the same pattern — it uses an OpenAI-compatible API:
+---
+
+### OpenAI-Compatible Providers (Groq, Together AI, Fireworks, ...)
+
+Any provider following the `{ messages, model, stream, temperature, ... }` format works with this library — just swap the URL and auth headers.
+
+**Groq:**
 
 ````typescript
 stream.dataFetch({
@@ -987,11 +1023,30 @@ stream.dataFetch({
 
 const generator = await stream.fetchIA();
 for await (const chunk of generator) {
-    process.stdout.write(chunk.content);
+    process.stdout.write(chunk);
 }
 ```
 
-> **Tip:** Groq can also use the [DeepSeek builders](#per-provider-builders-deepseek) — the body format is the same (OpenAI-compatible). Just swap the URL.
+**DeepSeek, Together AI, Fireworks, Perplexity, xAI:**
+
+The [DeepSeek builders](#per-provider-builders-deepseek) work with any OpenAI-compatible provider — just swap the URL in `dataFetch()`. Example:
+
+```typescript
+stream.dataFetch({
+    url: "https://api.together.xyz/v1/chat/completions", // or Groq, Fireworks, etc.
+    headers: new DeepSeekHeadersBuilder().apiKey("sk-your-token").build(),
+    body: new DeepSeekBodyBuilder()
+        .model("mistralai/Mixtral-8x7B-Instruct-v0.1")
+        .messages([new DeepSeekMessageBuilder().role("user").content("Hello").build()])
+        .stream(true)
+        .build(),
+    extractor: [{
+        fn: ({ data }) => ({ content: data.choices?.[0]?.delta?.content ?? "" })
+    }],
+});
+```
+
+> **Compatible with:** Groq, Together AI, Fireworks, Perplexity, xAI, DeepSeek, and any API using the `{ messages, model, stream, ... }` shape. Just adjust the URL and API key.
 
 ---
 
@@ -1027,7 +1082,7 @@ stream.dataFetch({
 
 const generator = await stream.fetchIA();
 for await (const chunk of generator) {
-    process.stdout.write(chunk.text);
+    process.stdout.write(chunk);
 }
 ```
 
@@ -1083,7 +1138,7 @@ stream.dataFetch({
 
 const generator = await stream.fetchIA();
 for await (const chunk of generator) {
-    process.stdout.write(chunk.content);
+    process.stdout.write(chunk);
 }
 ````
 
@@ -1132,7 +1187,7 @@ stream.dataFetch({
 
 const generator = await stream.fetchIA();
 for await (const chunk of generator) {
-    process.stdout.write(chunk.text);
+    process.stdout.write(chunk);
 }
 ```
 
@@ -1171,7 +1226,7 @@ for await (const chunk of generator) {
 }
 ```
 
-When the consumer cancels via `break` or `AbortSignal`, the internal `bodyReader` is cancelled and the inactivity timeout is cleared automatically via the `finally` block.
+When the consumer cancels via `break` or `AbortSignal`, the internal `bodyReader` lock is released (`releaseLock`) and the inactivity timeout is cleared automatically via the `finally` block.
 
 ---
 
@@ -1208,18 +1263,18 @@ stream.dataFetch({
     ],
     onDone: (finalData) => {
         console.log("Full response:", finalData);
-        // await db.messages.update({ response: finalData.content });
+        // finalData.chunksAcumulated contains the full SSE string
     },
 });
 
 const generator = await stream.fetchIA();
 
 for await (const chunk of generator) {
-    process.stdout.write(chunk.content);
+    process.stdout.write(chunk);
 }
 ```
 
-The `finalData` object contains `chunksAcumulated` with the full accumulated SSE string. With no data, `onDone` receives `{ chunksAcumulated: "" }`.
+The `finalData` object contains `chunksAcumulated` with the full accumulated SSE string. If no data was accumulated (empty stream), `onDone` is not called.
 
 ---
 
@@ -1392,10 +1447,10 @@ interface dataFetchType<
 > {
     url: string;
     headers?: H;
-    body?: B;
     timeOut?: number;
     extractor?: extractorType<TData, TEvent>[];
     onDone?: (finalData: Record<string, unknown>) => void;
+    body?: B;
 }
 
 interface FetchOptions {
@@ -1434,12 +1489,16 @@ Two internal states track data during streaming:
 
 | State               | Scope         | Purpose                                                                                                    |
 | ------------------- | ------------- | ---------------------------------------------------------------------------------------------------------- |
-| `state`             | One SSE line  | Holds the parsed `data`, `event`, and `extracted` for the current chunk. Cleared after each yield.         |
-| `stateLongDuration` | Entire stream | Accumulates `data` (latest) and `extractedLongDuration` (merged across all chunks). Used internally. |
+| `state`             | One SSE line  | Holds the parsed `data` and `event` for the current chunk. Cleared after each yield.         |
+| `stateLongDuration` | Entire stream | Accumulates the latest `data` chunk. Used internally. |
 
 ### `[DONE]`
 
-The SSE protocol signals end-of-stream with `data: [DONE]`. When detected, `onDone` is called with `{ chunksAcumulated }`, and the generator exits via `return`.
+The SSE protocol signals end-of-stream with `data: [DONE]`. When detected, `onDone` is called with `{ chunksAcumulated }` (if data was accumulated), and the generator exits via `return`.
+
+> **Caution:** Detection uses strict equality (`===`). `data:[DONE]` (no space) or `data: [DONE]\r` (CR) are **not** recognized. SSE `data:` values with falsy JSON content (`0`, `false`, `""`, `null`) are silently skipped and do not produce output.
+
+> **Events:** The `event:` SSE field is parsed as JSON. `event: ping` (bare string without quotes) will throw an error. `event` values that are objects will be stringified to `[object Object]` in the formatted output.
 
 ### Cancellation
 
