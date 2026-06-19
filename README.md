@@ -143,14 +143,14 @@ Configura a instância. Deve ser chamado antes de `fetchIA()`.
 stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 ```
 
-| Parâmetro   | Tipo                                                      | Obrigatório | Descrição                                                                                                                                                  |
-| ----------- | --------------------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `url`       | `string`                                                  | Sim         | Endpoint do provedor de IA                                                                                                                                 |
-| `headers`   | `Record<string, string>` ou tipo customizado via Builder  | Não         | Headers HTTP (Authorization, Content-Type, etc.). Pode ser tipado automaticamente ao usar um builder de provedor.                                          |
-| `timeOut`   | `number`                                                  | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk. Sem limite de tempo total.                                                                   |
-| `extractor` | `extractorType[]`                                         | Não         | Extratores padrão para todas as chamadas `fetchIA()`. Processam dados tanto no streaming quanto no fallback não-streaming.                                                         |
+| Parâmetro   | Tipo                                                      | Obrigatório | Descrição                                                                                                                                                            |
+| ----------- | --------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`       | `string`                                                  | Sim         | Endpoint do provedor de IA                                                                                                                                           |
+| `headers`   | `Record<string, string>` ou tipo customizado via Builder  | Não         | Headers HTTP (Authorization, Content-Type, etc.). Pode ser tipado automaticamente ao usar um builder de provedor.                                                    |
+| `timeOut`   | `number`                                                  | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk. Sem limite de tempo total.                                                                             |
+| `extractor` | `extractorType[]`                                         | Não         | Extratores padrão para todas as chamadas `fetchIA()`. Processam dados tanto no streaming quanto no fallback não-streaming.                                           |
 | `onDone`    | `(finalData: Record<string, unknown>) => void`            | Não         | Callback disparado quando o **stream** termina (apenas modo streaming). Recebe `{ chunksAcumulated }` com a string SSE completa. Útil para salvar em banco de dados. |
-| `body`      | `Record<string, unknown>` ou tipo customizado via Builder | Não         | Corpo da requisição (serializado como JSON). Configure aqui ou use um builder de provedor para autocompletar todos os campos.                              |
+| `body`      | `Record<string, unknown>` ou tipo customizado via Builder | Não         | Corpo da requisição (serializado como JSON). Configure aqui ou use um builder de provedor para autocompletar todos os campos.                                        |
 
 ---
 
@@ -162,12 +162,12 @@ Executa a requisição HTTP e retorna um `AsyncGenerator` ou um objeto JSON pars
 stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, unknown>>
 ```
 
-| Parâmetro     | Tipo          | Obrigatório | Descrição                                                                                              |
-| ------------- | ------------- | ----------- | ------------------------------------------------------------------------------------------------------ |
-| `method`      | `string`      | Não         | Método HTTP. Padrão: `"POST"`                                                                          |
-| `signal`      | `AbortSignal` | Não         | Sinal do AbortController para cancelamento da requisição                                               |
+| Parâmetro     | Tipo          | Obrigatório | Descrição                                                                                                              |
+| ------------- | ------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `method`      | `string`      | Não         | Método HTTP. Padrão: `"POST"`                                                                                          |
+| `signal`      | `AbortSignal` | Não         | Sinal do AbortController para cancelamento da requisição                                                               |
 | `encodeBytes` | `boolean`     | Não         | Se `true`, os chunks yieldados são `Uint8Array`. Se `false`/`undefined`, os chunks são strings no formato configurado. |
-| `formatSSE`   | `boolean`     | Não         | Se `true` (padrão), saída no formato SSE (`data: {...}\n\n`). Se `false`, string do dado com `\n\n` no final.         |
+| `formatSSE`   | `boolean`     | Não         | Se `true` (padrão), saída no formato SSE (`data: {...}\n\n`). Se `false`, string do dado com `\n\n` no final.          |
 
 **Retorna:**
 
@@ -187,7 +187,10 @@ stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, u
 Cada função extratora recebe os campos `data` e `event` (opcional) do chunk atual.
 
 ```typescript
-type extractorType<TData extends object = Record<string, unknown>, TEvent = string> = {
+type extractorType<
+    TData extends object = Record<string, unknown>,
+    TEvent = string,
+> = {
     fn: ({
         data,
         event,
@@ -203,7 +206,6 @@ type extractorType<TData extends object = Record<string, unknown>, TEvent = stri
 - `event` é **opcional** — ausente em respostas JSON não-streaming. Quando presente, é uma string (ex: `"ping"`, `"content_block_delta"`).
 - **Streaming:** a saída são os dados processados pelos extratores, formatados como string SSE (`data: {...}\nevent: ...\n\n`) ou, se `formatSSE: false`, como string com `\n\n` no final. Os dados acumulados de todo o stream são entregues ao `onDone` como `{ chunksAcumulated }`.
 - **JSON (não-streaming):** todos os extratores são aplicados em sequência. O retorno `{}` alimenta o próximo extrator com o objeto vazio.
-
 
 ---
 
@@ -384,7 +386,9 @@ Use builders para montar headers e body com tipos exatos para a [Anthropic Messa
 
 ```typescript
 import {
-    AnthropicHeadersBuilder, AnthropicBodyBuilder, AnthropicMessageBuilder,
+    AnthropicHeadersBuilder,
+    AnthropicBodyBuilder,
+    AnthropicMessageBuilder,
     AnthropicThinkingBuilder,
 } from "@felipe-lib/stream-http-event/builders-providers/anthropic";
 
@@ -397,22 +401,30 @@ stream.dataFetch({
         .model("claude-sonnet-4-20250514")
         .maxTokens(1024)
         .messages([
-            new AnthropicMessageBuilder().role("user").content("Olá, Claude!").build(),
+            new AnthropicMessageBuilder()
+                .role("user")
+                .content("Olá, Claude!")
+                .build(),
         ])
         .system("Você é um assistente útil.")
         .thinking(
-            new AnthropicThinkingBuilder().type("enabled").budgetTokens(2048).build()
+            new AnthropicThinkingBuilder()
+                .type("enabled")
+                .budgetTokens(2048)
+                .build(),
         )
         .stream(true)
         .build(),
-    extractor: [{
-        fn: ({ data }) => {
-            if (data.type === "content_block_delta") {
-                return { text: data.delta?.text ?? "" };
-            }
-            return {};
-        }
-    }],
+    extractor: [
+        {
+            fn: ({ data }) => {
+                if (data.type === "content_block_delta") {
+                    return { text: data.delta?.text ?? "" };
+                }
+                return {};
+            },
+        },
+    ],
 });
 
 const generator = await stream.fetchIA();
@@ -688,7 +700,10 @@ interface FetchOptions {
     formatSSE?: boolean;
 }
 
-interface extractorType<TData extends object = Record<string, unknown>, TEvent = string> {
+interface extractorType<
+    TData extends object = Record<string, unknown>,
+    TEvent = string,
+> {
     fn: ({
         data,
         event,
@@ -709,22 +724,22 @@ Chunks de rede podem chegar em tamanhos arbitrários, dividindo mensagens SSE no
 
 ### Timeout
 
-O timeout é **baseado em inatividade** — ele reseta a cada chunk recebido. Não há limite de duração total. Se nenhum dado chegar durante os `timeOut` milissegundos configurados, o stream é abortado via `throw` e `bodyReader.cancel()`.
+O timeout é **baseado em inatividade** — ele reseta a cada chunk recebido. Não há limite de duração total. Se nenhum dado chegar durante os `timeOut` milissegundos configurados, o `bodyReader` é cancelado via `cancel()`, o que faz o próximo `read()` lançar um erro (relançado pelo `catch` interno).
 
 ### Estados
 
 Dois estados internos rastreiam dados durante o streaming:
 
-| Estado              | Escopo         | Propósito                                                                                                 |
-| ------------------- | -------------- | --------------------------------------------------------------------------------------------------------- |
-| `state`             | Uma mensagem SSE | Mantém `data` e `event` parseados para o chunk atual. Limpo após cada yield.                 |
-| `stateLongDuration` | Stream inteiro | Acumula `data` do chunk mais recente. Uso interno. |
+| Estado              | Escopo           | Propósito                                                                    |
+| ------------------- | ---------------- | ---------------------------------------------------------------------------- |
+| `state`             | Uma mensagem SSE | Mantém `data` e `event` parseados para o chunk atual. Limpo após cada yield. |
+| `stateLongDuration` | Stream inteiro   | Acumula `data` do chunk mais recente. Uso interno.                           |
 
 ### `[DONE]`
 
 O protocolo SSE sinaliza fim do stream com `data: [DONE]`. Quando detectado, `onDone` é chamado com `{ chunksAcumulated }` (se houver dados) e o generator encerra via `return`. `onDone` também é chamado no fim natural do stream (quando o `bodyReader` indica `done: true`).
 
-> **Atenção:** A detecção usa correspondência exata (`===`). `data:[DONE]` sem espaço ou `data: [DONE]\r` (CR) **não** são reconhecidos. Valores SSE `data:` com conteúdo JSON falsy (`0`, `false`, `""`, `null`) são ignorados e não geram saída.
+> **Atenção:** A detecção usa correspondência exata (`===`). `data:[DONE]` sem espaço ou `data: [DONE]\r` (CR) **não** são reconhecidos. Valores SSE `data:` com conteúdo JSON falsy (`0`, `false`, `""`) são ignorados e não geram saída. O valor `null` não é ignorado — cai no fallback `"nenhum dado foi extraido de data"` e gera saída.
 
 > **Eventos:** O campo `event:` do SSE é interpretado como JSON. `event: ping` (string simples sem aspas) lançará um erro. Valores de `event` que são objetos serão convertidos para `[object Object]` na saída formatada.
 
@@ -874,14 +889,14 @@ Configures the instance. Must be called before `fetchIA()`.
 stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 ```
 
-| Parameter   | Type                                                        | Required | Description                                                                                                                                   |
-| ----------- | ----------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `url`       | `string`                                                    | Yes      | AI provider endpoint                                                                                                                          |
-| `headers`   | `Record<string, string>` or provider-specific Builder type  | No       | HTTP headers (Authorization, Content-Type, etc.). Automatically typed when using a provider builder.                                          |
-| `timeOut`   | `number`                                                    | No       | Inactivity timeout in milliseconds. Resets on each chunk. No total-time limit.                                                                |
-| `extractor` | `extractorType[]`                                           | No       | Default extractors for every `fetchIA()` call. Process data in both streaming and non-streaming fallback.                                                   |
+| Parameter   | Type                                                        | Required | Description                                                                                                                                                           |
+| ----------- | ----------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `url`       | `string`                                                    | Yes      | AI provider endpoint                                                                                                                                                  |
+| `headers`   | `Record<string, string>` or provider-specific Builder type  | No       | HTTP headers (Authorization, Content-Type, etc.). Automatically typed when using a provider builder.                                                                  |
+| `timeOut`   | `number`                                                    | No       | Inactivity timeout in milliseconds. Resets on each chunk. No total-time limit.                                                                                        |
+| `extractor` | `extractorType[]`                                           | No       | Default extractors for every `fetchIA()` call. Process data in both streaming and non-streaming fallback.                                                             |
 | `onDone`    | `(finalData: Record<string, unknown>) => void`              | No       | Callback fired when the **stream** ends (streaming mode only). Receives `{ chunksAcumulated }` with the full accumulated SSE string. Useful for saving to a database. |
-| `body`      | `Record<string, unknown>` or provider-specific Builder type | No       | Request body (serialized as JSON). Configure here or use a provider builder for auto-completion of all fields.                                |
+| `body`      | `Record<string, unknown>` or provider-specific Builder type | No       | Request body (serialized as JSON). Configure here or use a provider builder for auto-completion of all fields.                                                        |
 
 ---
 
@@ -893,11 +908,11 @@ Executes the HTTP request and returns either an `AsyncGenerator` or a parsed JSO
 stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, unknown>>
 ```
 
-| Parameter     | Type          | Required | Description                                                                                   |
-| ------------- | ------------- | -------- | --------------------------------------------------------------------------------------------- |
-| `method`      | `string`      | No       | HTTP method. Default: `"POST"`                                                                |
-| `signal`      | `AbortSignal` | No       | AbortController signal for request cancellation                                               |
-| `encodeBytes` | `boolean`     | No       | If `true`, yielded chunks are `Uint8Array`. If `false`/`undefined`, chunks are strings in the configured format. |
+| Parameter     | Type          | Required | Description                                                                                                         |
+| ------------- | ------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| `method`      | `string`      | No       | HTTP method. Default: `"POST"`                                                                                      |
+| `signal`      | `AbortSignal` | No       | AbortController signal for request cancellation                                                                     |
+| `encodeBytes` | `boolean`     | No       | If `true`, yielded chunks are `Uint8Array`. If `false`/`undefined`, chunks are strings in the configured format.    |
 | `formatSSE`   | `boolean`     | No       | If `true` (default), output is SSE-formatted (`data: {...}\n\n`). If `false`, raw data string with trailing `\n\n`. |
 
 **Returns:**
@@ -918,7 +933,10 @@ stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, u
 Each extractor function receives the parsed `data` and `event` (optional) from the current chunk.
 
 ```typescript
-type extractorType<TData extends object = Record<string, unknown>, TEvent = string> = {
+type extractorType<
+    TData extends object = Record<string, unknown>,
+    TEvent = string,
+> = {
     fn: ({
         data,
         event,
@@ -1114,7 +1132,9 @@ Use builders to construct headers and body with exact types for the [Anthropic M
 
 ```typescript
 import {
-    AnthropicHeadersBuilder, AnthropicBodyBuilder, AnthropicMessageBuilder,
+    AnthropicHeadersBuilder,
+    AnthropicBodyBuilder,
+    AnthropicMessageBuilder,
     AnthropicThinkingBuilder,
 } from "@felipe-lib/stream-http-event/builders-providers/anthropic";
 
@@ -1127,22 +1147,30 @@ stream.dataFetch({
         .model("claude-sonnet-4-20250514")
         .maxTokens(1024)
         .messages([
-            new AnthropicMessageBuilder().role("user").content("Hello, Claude!").build(),
+            new AnthropicMessageBuilder()
+                .role("user")
+                .content("Hello, Claude!")
+                .build(),
         ])
         .system("You are a helpful assistant.")
         .thinking(
-            new AnthropicThinkingBuilder().type("enabled").budgetTokens(2048).build()
+            new AnthropicThinkingBuilder()
+                .type("enabled")
+                .budgetTokens(2048)
+                .build(),
         )
         .stream(true)
         .build(),
-    extractor: [{
-        fn: ({ data }) => {
-            if (data.type === "content_block_delta") {
-                return { text: data.delta?.text ?? "" };
-            }
-            return {};
-        }
-    }],
+    extractor: [
+        {
+            fn: ({ data }) => {
+                if (data.type === "content_block_delta") {
+                    return { text: data.delta?.text ?? "" };
+                }
+                return {};
+            },
+        },
+    ],
 });
 
 const generator = await stream.fetchIA();
@@ -1418,7 +1446,10 @@ interface FetchOptions {
     formatSSE?: boolean;
 }
 
-interface extractorType<TData extends object = Record<string, unknown>, TEvent = string> {
+interface extractorType<
+    TData extends object = Record<string, unknown>,
+    TEvent = string,
+> {
     fn: ({
         data,
         event,
@@ -1439,22 +1470,22 @@ Network chunks may arrive in arbitrary sizes, splitting SSE messages mid-way. Th
 
 ### Timeout
 
-Timeout is **inactivity-based** — it resets on every received chunk. There is no total-duration limit. If no data arrives for the configured `timeOut` milliseconds, the stream is aborted via `throw` and `bodyReader.cancel()`.
+Timeout is **inactivity-based** — it resets on every received chunk. There is no total-duration limit. If no data arrives for the configured `timeOut` milliseconds, the `bodyReader` is cancelled via `cancel()`, causing the next `read()` to throw (re-thrown by the internal `catch`).
 
 ### States
 
 Two internal states track data during streaming:
 
-| State               | Scope         | Purpose                                                                                                    |
-| ------------------- | ------------- | ---------------------------------------------------------------------------------------------------------- |
-| `state`               | One SSE message | Holds the parsed `data` and `event` for the current chunk. Cleared after each yield.         |
-| `stateLongDuration` | Entire stream | Accumulates the latest `data` chunk. Used internally. |
+| State               | Scope           | Purpose                                                                              |
+| ------------------- | --------------- | ------------------------------------------------------------------------------------ |
+| `state`             | One SSE message | Holds the parsed `data` and `event` for the current chunk. Cleared after each yield. |
+| `stateLongDuration` | Entire stream   | Accumulates the latest `data` chunk. Used internally.                                |
 
 ### `[DONE]`
 
 The SSE protocol signals end-of-stream with `data: [DONE]`. When detected, `onDone` is called with `{ chunksAcumulated }` (if data was accumulated), and the generator exits via `return`. `onDone` is also called on natural stream end (when `bodyReader` signals `done: true`).
 
-> **Caution:** Detection uses strict equality (`===`). `data:[DONE]` (no space) or `data: [DONE]\r` (CR) are **not** recognized. SSE `data:` values with falsy JSON content (`0`, `false`, `""`, `null`) are silently skipped and do not produce output.
+> **Caution:** Detection uses strict equality (`===`). `data:[DONE]` (no space) or `data: [DONE]\r` (CR) are **not** recognized. SSE `data:` values with falsy JSON content (`0`, `false`, `""`) are silently skipped and do not produce output. The value `null` is not skipped — it falls through to the `"nenhum dado foi extraido de data"` fallback and produces output.
 
 > **Events:** The `event:` SSE field is parsed as JSON. `event: ping` (bare string without quotes) will throw an error. `event` values that are objects will be stringified to `[object Object]` in the formatted output.
 
