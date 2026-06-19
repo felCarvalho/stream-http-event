@@ -716,39 +716,6 @@ interface extractorType<
 
 ---
 
-## Funcionamento Interno
-
-### Buffer
-
-Chunks de rede podem chegar em tamanhos arbitrários, dividindo mensagens SSE no meio. O buffer acumula bytes recebidos e só processa mensagens completas (terminadas com `\n\n`). Fragmentos incompletos são mantidos até o próximo chunk chegar.
-
-### Timeout
-
-O timeout é **baseado em inatividade** — ele reseta a cada chunk recebido. Não há limite de duração total. Se nenhum dado chegar durante os `timeOut` milissegundos configurados, o `bodyReader` é cancelado via `cancel()`, o que faz o próximo `read()` lançar um erro (relançado pelo `catch` interno).
-
-### Estados
-
-Dois estados internos rastreiam dados durante o streaming:
-
-| Estado              | Escopo           | Propósito                                                                    |
-| ------------------- | ---------------- | ---------------------------------------------------------------------------- |
-| `state`             | Uma mensagem SSE | Mantém `data` e `event` parseados para o chunk atual. Limpo após cada yield. |
-| `stateLongDuration` | Stream inteiro   | Acumula `data` do chunk mais recente. Uso interno.                           |
-
-### `[DONE]`
-
-O protocolo SSE sinaliza fim do stream com `data: [DONE]`. Quando detectado, `onDone` é chamado com `{ chunksAcumulated }` (se houver dados) e o generator encerra via `return`. `onDone` também é chamado no fim natural do stream (quando o `bodyReader` indica `done: true`).
-
-> **Atenção:** A detecção usa correspondência exata (`===`). `data:[DONE]` sem espaço ou `data: [DONE]\r` (CR) **não** são reconhecidos. Valores SSE `data:` com conteúdo JSON falsy (`0`, `false`, `""`) são ignorados e não geram saída. O valor `null` não é ignorado — cai no fallback `"nenhum dado foi extraido de data"` e gera saída.
-
-> **Eventos:** O campo `event:` do SSE é interpretado como JSON. `event: ping` (string simples sem aspas) lançará um erro. Valores de `event` que são objetos serão convertidos para `[object Object]` na saída formatada.
-
-### Cancelamento
-
-Quando o consumidor cancela (via `break` no `for await` ou `AbortSignal`), o bloco `finally` interno limpa o timer de inatividade e libera o lock do `bodyReader`. Nenhum recurso vaza.
-
----
-
 ## Licença
 
 ISC
@@ -1459,39 +1426,6 @@ interface extractorType<
     }) => Record<string, unknown>;
 }
 ```
-
----
-
-## Internals
-
-### Buffer
-
-Network chunks may arrive in arbitrary sizes, splitting SSE messages mid-way. The buffer accumulates incoming bytes and only processes full messages (ending with `\n\n`). Incomplete fragments are held until the next chunk arrives.
-
-### Timeout
-
-Timeout is **inactivity-based** — it resets on every received chunk. There is no total-duration limit. If no data arrives for the configured `timeOut` milliseconds, the `bodyReader` is cancelled via `cancel()`, causing the next `read()` to throw (re-thrown by the internal `catch`).
-
-### States
-
-Two internal states track data during streaming:
-
-| State               | Scope           | Purpose                                                                              |
-| ------------------- | --------------- | ------------------------------------------------------------------------------------ |
-| `state`             | One SSE message | Holds the parsed `data` and `event` for the current chunk. Cleared after each yield. |
-| `stateLongDuration` | Entire stream   | Accumulates the latest `data` chunk. Used internally.                                |
-
-### `[DONE]`
-
-The SSE protocol signals end-of-stream with `data: [DONE]`. When detected, `onDone` is called with `{ chunksAcumulated }` (if data was accumulated), and the generator exits via `return`. `onDone` is also called on natural stream end (when `bodyReader` signals `done: true`).
-
-> **Caution:** Detection uses strict equality (`===`). `data:[DONE]` (no space) or `data: [DONE]\r` (CR) are **not** recognized. SSE `data:` values with falsy JSON content (`0`, `false`, `""`) are silently skipped and do not produce output. The value `null` is not skipped — it falls through to the `"nenhum dado foi extraido de data"` fallback and produces output.
-
-> **Events:** The `event:` SSE field is parsed as JSON. `event: ping` (bare string without quotes) will throw an error. `event` values that are objects will be stringified to `[object Object]` in the formatted output.
-
-### Cancellation
-
-When the consumer cancels (via `break` in `for await` or `AbortSignal`), the internal `finally` block clears the inactivity timer and releases the `bodyReader` lock. No resources leak.
 
 ---
 
