@@ -1,6 +1,6 @@
 # @felipe-lib/stream-http-event
 
-[![npm version](https://img.shields.io/badge/npm-v1.5.5-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
+[![npm version](https://img.shields.io/badge/npm-v2.0.0-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
 [![license](https://img.shields.io/badge/license-ISC-green)](./LICENSE)
 
 **Zero dependências em runtime.** Consuma respostas HTTP em streaming de provedores de IA (OpenAI, Anthropic, Groq, DeepSeek, etc.) via o protocolo [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
@@ -11,30 +11,43 @@ Funciona em qualquer runtime com `fetch`, `AsyncGenerator`, `TextDecoder` e `Tex
 
 # Português
 
+---
+
 ## Índice
 
-- [Início Rápido](#início-rápido)
 - [Instalação](#instalação)
-- [Conceitos Fundamentais](#conceitos-fundamentais)
+- [Início Rápido](#início-rápido)
+- [O que mudou?](#o-que-mudou)
 - [Referência da API](#referência-da-api)
     - [`dataFetch()`](#datafetch)
+    - [`ExtractorsType`](#extractortype)
     - [`fetchIA()`](#fetchia)
-    - [`extractorType`](#extractortype)
-- [Guias](#guias)
-    - [Streaming Básico (OpenAI)](#streaming-básico-openai)
-    - [Provedores OpenAI-compatíveis](#provedores-openai-compatíveis-groq-together-ai-fireworks-)
-- [Extratores por Provedor (Anthropic)](#extratores-por-provedor-anthropic)
-- [Builders por Provedor (DeepSeek)](#builders-por-provedor-deepseek)
-    - [Builders por Provedor (Anthropic)](#builders-por-provedor-anthropic)
-- [Cancelamento](#cancelamento)
-    - [Salvando a Resposta Completa](#salvando-a-resposta-completa)
-    - [Fallback Não-Streaming](#fallback-não-streaming)
-    - [Pipe para Arquivo](#pipe-para-arquivo)
-    - [Servidor Proxy HTTP](#servidor-proxy-http)
-    - [Múltiplos Provedores em Paralelo](#múltiplos-provedores-em-paralelo)
-- [Tipos TypeScript](#tipos-typescript)
-- [Funcionamento Interno](#funcionamento-interno)
-- [Licença](#licença)
+- [Exemplos](#exemplos)
+    - [Streaming OpenAI](#streaming-openai)
+    - [DeepSeek com builders](#deepseek-com-builders)
+    - [Anthropic](#anthropic)
+    - [Saída sem prefixKeys](#saída-sem-prefixkeys)
+    - [Cancelamento](#cancelamento)
+    - [Salvando resposta completa (onDone)](#salvando-resposta-completa-ondon)
+    - [Pipe para arquivo](#pipe-para-arquivo)
+    - [Fallback não-streaming](#fallback-não-streaming)
+    - [Múltiplos provedores](#múltiplos-provedores)
+- [Como funciona internamente](#como-funciona-internamente)
+- [Builders por Provedor](#builders-por-provedor)
+    - [DeepSeek](#deepseek)
+    - [Anthropic](#anthropic-1)
+- [Tipos TypeScript públicos](#tipos-typescript-públicos)
+- [Projeto Estudantil](#projeto-estudantil)
+
+---
+
+## Instalação
+
+```bash
+npm install @felipe-lib/stream-http-event
+# ou
+pnpm add @felipe-lib/stream-http-event
+```
 
 ---
 
@@ -45,7 +58,6 @@ import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
 
 const stream = new StreamHttpEvent();
 
-// 1. Configurar
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
     headers: { Authorization: "Bearer sk-seu-token" },
@@ -54,25 +66,184 @@ stream.dataFetch({
         messages: [{ role: "user", content: "Olá!" }],
         stream: true,
     },
-    extractor: [
-        {
-            fn: ({ data }) => ({
-                content: data.choices?.[0]?.delta?.content ?? "",
-            }),
-        },
-    ],
+    extractors: {
+        defaultExtract: [
+            { key: "content", forExtract: "data.choices[0].delta.content" },
+        ],
+    },
 });
 
-// 2. Requisitar
 const generator = await stream.fetchIA();
 
-// 3. Ler (chunk é string no formato `data: {...}\n\n`)
 for await (const chunk of generator) {
     process.stdout.write(chunk);
 }
 ```
 
-**Com builder tipado (DeepSeek):**
+A saída de cada chunk será algo como:
+
+```
+content: "Olá"\n
+
+```
+
+---
+
+## O que mudou?
+
+Esta seção documenta as principais alterações em relação à versão anterior da API.
+
+### Extractors
+
+| Antes                                                   | Depois                                                                                              |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `extractor: [{ fn: ({ data }) => ({ content: ... }) }]` | `extractors: { defaultExtract: [{ key: "content", forExtract: "data.choices[0].delta.content" }] }` |
+
+A API antiga usava funções JavaScript para extrair dados. A nova usa **paths** (strings que navegam pelo objeto JSON), tornando a configuração declarativa e serializável.
+
+### Busca de chaves no stream
+
+| Antes                                                                                               | Depois                                                                                                                                 |
+| --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Hardcoded `state.getStateOne("extracted")` — só funcionava se a key do extrator fosse `"extracted"` | **Loop dinâmico** — percorre **todas** as keys configuradas em `defaultExtract` e `conditionalxtractor`, montando a saída com cada uma |
+
+### Formato de saída
+
+| Antes                                                     | Depois                                                                       |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Sempre `data: {...}\nevent: ...\n\n` (formato SSE padrão) | Controlado por `prefixKeys`: `true` → `key: valor\n`, `false` → só `valor\n` |
+
+### Nomenclatura
+
+- `formatSSE` foi renomeado para **`prefixKeys`** — descreve com precisão o que faz
+
+### Código removido
+
+- `onData` e `onEvent` — declarados mas nunca chamados
+- `getState`, `clearStateByKey`, `hasStateByKey` — métodos não utilizados no state local
+- `try { ... } catch (e) { throw e }` — blocos redundantes
+
+### Bugs corrigidos
+
+- `if (value)` agora é `if (value !== undefined)` — valores `0`, `""`, `false` não são mais ignorados
+- `types.anthropic.ts`: campo `ccontent` corrigido para `content` (typo)
+- `types.anthropic.ts`: duplicata removida de union type
+
+---
+
+## Referência da API
+
+### `dataFetch()`
+
+Configura a instância. Deve ser chamado antes de `fetchIA()`.
+
+```typescript
+stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
+```
+
+| Parâmetro    | Tipo                                           | Obrigatório | Descrição                                                                 |
+| ------------ | ---------------------------------------------- | ----------- | ------------------------------------------------------------------------- |
+| `url`        | `string`                                       | Sim         | Endpoint do provedor de IA                                                |
+| `headers`    | `Record<string, string>`                       | Não         | Headers HTTP. Pode ser tipado via builder de provedor                     |
+| `body`       | `Record<string, unknown>`                      | Não         | Corpo da requisição (serializado como JSON)                               |
+| `timeOut`    | `number`                                       | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk              |
+| `onDone`     | `(finalData: Record<string, unknown>) => void` | Não         | Callback disparado quando o stream termina. Recebe `{ chunksAcumulated }` |
+| `extractors` | `ExtractorsType`                               | Sim         | Configuração dos extratores de dados                                      |
+
+---
+
+### `ExtractorsType`
+
+```typescript
+interface ExtractorsType {
+    defaultExtract: extract[];
+    conditionalxtractor?: condicionalExtract[];
+}
+
+interface extract {
+    key: string;
+    forExtract: string;
+}
+
+interface condicionalExtract {
+    key: string;
+    path: string;
+    condition: string;
+}
+```
+
+**`defaultExtract`** — sempre aplicado em cada mensagem SSE:
+
+- `key`: nome da chave que será usada na saída e no state interno
+- `forExtract`: caminho JSON para navegar até o valor desejado (ex: `"data.choices[0].delta.content"`)
+- Suporta navegação por pontos e colchetes: `"data.choices[0].delta.content"`
+
+**`conditionalxtractor`** — aplicado apenas se a condição for satisfeita:
+
+- `key`: nome da chave de saída
+- `path`: caminho JSON para navegar até o valor
+- `condition`: valor esperado. Se o valor no `path` for igual a `condition`, o valor é extraído
+
+**Mesclagem de keys:** as keys de `defaultExtract` e `conditionalxtractor` são combinadas. Se ambos os arrays tiverem entries, **todas** as keys são usadas na saída.
+
+---
+
+### `fetchIA()`
+
+Executa a requisição HTTP e retorna um `AsyncGenerator` ou um objeto JSON parseado.
+
+```typescript
+stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, unknown>>
+```
+
+| Parâmetro     | Tipo          | Padrão   | Descrição                                                              |
+| ------------- | ------------- | -------- | ---------------------------------------------------------------------- |
+| `method`      | `string`      | `"POST"` | Método HTTP                                                            |
+| `signal`      | `AbortSignal` | —        | Sinal do AbortController para cancelamento                             |
+| `encodeBytes` | `boolean`     | `false`  | Se `true`, chunks yieldados são `Uint8Array`. Se `false`, são strings  |
+| `prefixKeys`  | `boolean`     | `true`   | Se `true`, saída no formato `key: valor\n`. Se `false`, apenas o valor |
+
+**Retorna:**
+
+- `AsyncGenerator<string | Uint8Array, void, unknown>` — se `Content-Type` for `text/event-stream`
+- `Record<string, unknown>` — o JSON parseado para respostas não-streaming
+
+---
+
+## Exemplos
+
+### Streaming OpenAI
+
+```typescript
+const stream = new StreamHttpEvent();
+
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: {
+        Authorization: "Bearer sk-seu-token",
+        "Content-Type": "application/json",
+    },
+    timeOut: 30000,
+    body: {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Explique SSE" }],
+        stream: true,
+    },
+    extractors: {
+        defaultExtract: [
+            { key: "content", forExtract: "data.choices[0].delta.content" },
+        ],
+    },
+});
+
+const generator = await stream.fetchIA();
+
+for await (const chunk of generator) {
+    process.stdout.write(chunk);
+}
+```
+
+### DeepSeek com builders
 
 ```typescript
 import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
@@ -92,13 +263,11 @@ stream.dataFetch({
         .messages([new DeepSeekMessageBuilder().content("Olá!").build()])
         .stream(true)
         .build(),
-    extractor: [
-        {
-            fn: ({ data }) => ({
-                content: data.choices?.[0]?.delta?.content ?? "",
-            }),
-        },
-    ],
+    extractors: {
+        defaultExtract: [
+            { key: "content", forExtract: "data.choices[0].delta.content" },
+        ],
+    },
 });
 
 const generator = await stream.fetchIA();
@@ -108,354 +277,73 @@ for await (const chunk of generator) {
 }
 ```
 
----
+### Anthropic
 
-## Instalação
-
-```bash
-npm install @felipe-lib/stream-http-event
-# ou
-pnpm add @felipe-lib/stream-http-event
-```
-
----
-
-## Conceitos Fundamentais
-
-**Qual problema isso resolve.** Provedores de IA retornam respostas em streaming como bytes SSE brutos. Fazer o parsing disso manualmente significa lidar com bufferização, divisão de linhas, detecção de `[DONE]` e formatos de resposta específicos de cada provedor. Esta biblioteca cuida de tudo isso e te entrega um `AsyncGenerator` limpo.
-
-**Padrão de dois passos.**
-
-1. `dataFetch()` — configura a instância (URL, headers, body, timeout, extratores, callback `onDone`). Chame uma vez.
-2. `fetchIA()` — executa a requisição. Retorna um `AsyncGenerator` (se a resposta for `text/event-stream`) ou um objeto JSON parseado (fallback para não-streaming).
-
-**Extratores** são funções `({ data, event? }) => Record<string, unknown>` que mapeiam os dados para o formato desejado. No streaming, os extratores processam cada chunk antes do yield, transformando os dados conforme a função `fn`. No fallback não-streaming, os extratores são aplicados sequencialmente sobre o JSON parseado (sem `event`).
-
----
-
-## Referência da API
-
-### `dataFetch()`
-
-Configura a instância. Deve ser chamado antes de `fetchIA()`.
-
-```typescript
-stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
-```
-
-| Parâmetro   | Tipo                                                      | Obrigatório | Descrição                                                                                                                                                            |
-| ----------- | --------------------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `url`       | `string`                                                  | Sim         | Endpoint do provedor de IA                                                                                                                                           |
-| `headers`   | `Record<string, string>` ou tipo customizado via Builder  | Não         | Headers HTTP (Authorization, Content-Type, etc.). Pode ser tipado automaticamente ao usar um builder de provedor.                                                    |
-| `timeOut`   | `number`                                                  | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk. Sem limite de tempo total.                                                                             |
-| `extractor` | `extractorType[]`                                         | Não         | Extratores padrão para todas as chamadas `fetchIA()`. Processam dados tanto no streaming quanto no fallback não-streaming.                                           |
-| `onDone`    | `(finalData: Record<string, unknown>) => void`            | Não         | Callback disparado quando o **stream** termina (apenas modo streaming). Recebe `{ chunksAcumulated }` com a string SSE completa. Útil para salvar em banco de dados. |
-| `body`      | `Record<string, unknown>` ou tipo customizado via Builder | Não         | Corpo da requisição (serializado como JSON). Configure aqui ou use um builder de provedor para autocompletar todos os campos.                                        |
-
----
-
-### `fetchIA()`
-
-Executa a requisição HTTP e retorna um `AsyncGenerator` ou um objeto JSON parseado.
-
-```typescript
-stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, unknown>>
-```
-
-| Parâmetro     | Tipo          | Obrigatório | Descrição                                                                                                              |
-| ------------- | ------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------- |
-| `method`      | `string`      | Não         | Método HTTP. Padrão: `"POST"`                                                                                          |
-| `signal`      | `AbortSignal` | Não         | Sinal do AbortController para cancelamento da requisição                                                               |
-| `encodeBytes` | `boolean`     | Não         | Se `true`, os chunks yieldados são `Uint8Array`. Se `false`/`undefined`, os chunks são strings no formato configurado. |
-| `formatSSE`   | `boolean`     | Não         | Se `true` (padrão), saída no formato SSE (`data: {...}\n\n`). Se `false`, string do dado com `\n\n` no final.          |
-
-**Retorna:**
-
-- `AsyncGenerator<string | Uint8Array, void, unknown>` — se `Content-Type` for `text/event-stream`. Consuma com `for await (const chunk of generator)`.
-- `Record<string, unknown>` — a resposta JSON parseada para requisições não-streaming. Se houver extratores configurados em `dataFetch()`, eles são aplicados sequencialmente sobre o JSON.
-
-**Erros:**
-
-- Lança erro se `dataFetch()` não foi chamado (nenhuma URL configurada).
-- Lança erro se a resposta HTTP não for OK (`!fetcher.ok`).
-- Lança erro se a resposta não tiver corpo.
-
----
-
-### `extractorType`
-
-Cada função extratora recebe os campos `data` e `event` (opcional) do chunk atual.
-
-```typescript
-type extractorType<
-    TData extends object = Record<string, unknown>,
-    TEvent = string,
-> = {
-    fn: ({
-        data,
-        event,
-    }: {
-        data: TData;
-        event?: TEvent;
-    }) => Record<string, unknown>;
-};
-```
-
-**Comportamento:**
-
-- `event` é **opcional** — ausente em respostas JSON não-streaming. Quando presente, é uma string (ex: `"ping"`, `"content_block_delta"`).
-- **Streaming:** a saída são os dados processados pelos extratores, formatados como string SSE (`data: {...}\nevent: ...\n\n`) ou, se `formatSSE: false`, como string com `\n\n` no final. Os dados acumulados de todo o stream são entregues ao `onDone` como `{ chunksAcumulated }`.
-- **JSON (não-streaming):** todos os extratores são aplicados em sequência. O retorno `{}` alimenta o próximo extrator com o objeto vazio.
-
----
-
-## Guias
-
-### Streaming Básico (OpenAI)
+O Anthropic usa um formato SSE diferente. Exemplo com `defaultExtract` + `conditionalxtractor`:
 
 ```typescript
 const stream = new StreamHttpEvent();
 
-stream.dataFetch({
-    url: "https://api.openai.com/v1/chat/completions",
-    headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer sk-seu-token",
-    },
-    timeOut: 30000,
-    body: {
-        model: "gpt-4o",
-        messages: [{ role: "user", content: "Explique SSE" }],
-        stream: true,
-    },
-    extractor: [
-        {
-            fn: ({ data }) => {
-                const content = data.choices?.[0]?.delta?.content;
-                return content ? { content } : {};
-            },
-        },
-    ],
-});
-
-const generator = await stream.fetchIA();
-
-for await (const chunk of generator) {
-    process.stdout.write(chunk);
-}
-```
-
----
-
-### Provedores OpenAI-compatíveis (Groq, Together AI, Fireworks, ...)
-
-Qualquer provedor que siga o formato `{ messages, model, stream, temperature, ... }` funciona com esta biblioteca — basta trocar a URL e os headers de autenticação.
-
-**Groq:**
-
-````typescript
-stream.dataFetch({
-    url: "https://api.groq.com/openai/v1/chat/completions",
-    headers: {
-        "Authorization": "Bearer gsk-seu-token",
-        "Content-Type": "application/json"
-    },
-    body: {
-        model: "llama-3.3-70b-versatile",
-        messages: [{ role: "user", content: "Olá" }],
-        stream: true
-    },
-    extractor: [{
-        fn: ({ data }) => ({
-            content: data.choices?.[0]?.delta?.content ?? ""
-        })
-    }]
-});
-
-const generator = await stream.fetchIA();
-for await (const chunk of generator) {
-    process.stdout.write(chunk);
-}
-```
-
-Para usar builders tipados com qualquer provedor OpenAI-compatível, veja a seção [Builders por Provedor (DeepSeek / OpenAI-compatível)](#builders-por-provedor-deepseek--openai-compatível) — basta trocar a URL.
-
----
-
-### Extratores por Provedor (Anthropic)
-
-O Anthropic usa um formato SSE diferente — adapte o extrator:
-
-```typescript
-const stream = new StreamHttpEvent();
 stream.dataFetch({
     url: "https://api.anthropic.com/v1/messages",
     headers: {
         "x-api-key": "sk-ant-seu-token",
         "anthropic-version": "2023-06-01",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     },
     timeOut: 30000,
     body: {
         model: "claude-sonnet-4-20250514",
         max_tokens: 1024,
         messages: [{ role: "user", content: "Olá" }],
-        stream: true
+        stream: true,
     },
-    extractor: [{
-        fn: ({ data }) => {
-            if (data.type === "content_block_delta") {
-                return { text: data.delta?.text };
-            }
-            return {};
-        }
-    }]
-});
-
-const generator = await stream.fetchIA();
-for await (const chunk of generator) {
-    process.stdout.write(chunk);
-}
-```
-
----
-
-### Builders por Provedor (DeepSeek / OpenAI-compatível)
-
-Use builders para montar headers e body com tipos exatos e autocompletar — sem decorar chaves nem digitar manualmente. **Funciona com qualquer provedor que siga o padrão OpenAI** (Groq, Together AI, Fireworks, etc.), bastando trocar a URL:
-
-> **Compatível com:** Groq, Together AI, Fireworks, Perplexity, xAI, e qualquer API que use o formato `{ messages, model, stream, temperature, ... }`. Apenas ajuste a URL no `dataFetch()`.
-
-```typescript
-import {
-    DeepSeekHeadersBuilder, DeepSeekBodyBuilder, DeepSeekMessageBuilder,
-    DeepSeekThinkingBuilder, DeepSeekToolBuilder, DeepSeekToolParametersBuilder,
-} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
-
-const stream = new StreamHttpEvent();
-
-stream.dataFetch({
-    url: "https://api.deepseek.com/chat/completions",
-    headers: new DeepSeekHeadersBuilder().apiKey("sk-seu-token").build(),
-    body: new DeepSeekBodyBuilder()
-        .model("deepseek-v4-pro")
-        .messages([
-            new DeepSeekMessageBuilder().role("system").content("Você é um assistente").build(),
-            new DeepSeekMessageBuilder().role("user").content("Qual o clima?").build(),
-        ])
-        .thinking(
-            new DeepSeekThinkingBuilder().type("enabled").reasoningEffort("high").build()
-        )
-        .tools([
-            new DeepSeekToolBuilder()
-                .name("getWeather")
-                .description("Busca clima da cidade")
-                .parameters(
-                    new DeepSeekToolParametersBuilder()
-                        .property("city", { type: "string", description: "Nome da cidade" })
-                        .required("city")
-                        .build()
-                )
-                .build(),
-        ])
-        .temperature(0.7)
-        .stream(true)
-        .build(),
-    extractor: [{
-        fn: ({ data }) => ({
-            content: data.choices?.[0]?.delta?.content ?? ""
-        })
-    }],
-});
-
-const generator = await stream.fetchIA();
-for await (const chunk of generator) {
-    process.stdout.write(chunk);
-}
-````
-
-Cada builder segue a interface correspondente. Se a interface mudar, o builder acompanha automaticamente. O `.build()` retorna o objeto tipado exato para `dataFetch()`.
-
----
-
-### Builders por Provedor (Anthropic)
-
-> **Em desenvolvimento.** Os builders Anthropic estão em fase inicial. A API de tipos está definida, mas ainda não cobre todos os recursos da Anthropic Messages API.
-
-Use builders para montar headers e body com tipos exatos para a [Anthropic Messages API](https://docs.anthropic.com/en/api/messages):
-
-```typescript
-import {
-    AnthropicHeadersBuilder,
-    AnthropicBodyBuilder,
-    AnthropicMessageBuilder,
-    AnthropicThinkingBuilder,
-} from "@felipe-lib/stream-http-event/builders-providers/anthropic";
-
-const stream = new StreamHttpEvent();
-
-stream.dataFetch({
-    url: "https://api.anthropic.com/v1/messages",
-    headers: new AnthropicHeadersBuilder().apiKey("sk-ant-seu-token").build(),
-    body: new AnthropicBodyBuilder()
-        .model("claude-sonnet-4-20250514")
-        .maxTokens(1024)
-        .messages([
-            new AnthropicMessageBuilder()
-                .role("user")
-                .content("Olá, Claude!")
-                .build(),
-        ])
-        .system("Você é um assistente útil.")
-        .thinking(
-            new AnthropicThinkingBuilder()
-                .type("enabled")
-                .budgetTokens(2048)
-                .build(),
-        )
-        .stream(true)
-        .build(),
-    extractor: [
-        {
-            fn: ({ data }) => {
-                if (data.type === "content_block_delta") {
-                    return { text: data.delta?.text ?? "" };
-                }
-                return {};
+    extractors: {
+        defaultExtract: [{ key: "text", forExtract: "data.delta.text" }],
+        conditionalxtractor: [
+            {
+                key: "eventType",
+                path: "data.type",
+                condition: "content_block_delta",
             },
-        },
-    ],
+        ],
+    },
 });
 
 const generator = await stream.fetchIA();
+
 for await (const chunk of generator) {
     process.stdout.write(chunk);
 }
 ```
 
-Cada builder segue a interface `types.anthropic.ts`. O `.build()` retorna o objeto tipado exato para `dataFetch()`.
+### Saída sem prefixKeys
 
----
+```typescript
+const generator = await stream.fetchIA({ prefixKeys: false });
+
+for await (const chunk of generator) {
+    // chunk: "Olá"\n  em vez de  content: "Olá"\n
+    process.stdout.write(chunk);
+}
+```
 
 ### Cancelamento
 
-**Via AbortController (antes da requisição começar):**
+Via AbortController:
 
 ```typescript
 const controller = new AbortController();
-
 setTimeout(() => controller.abort(), 5000);
 
-const generator = await stream.fetchIA({
-    signal: controller.signal,
-});
+const generator = await stream.fetchIA({ signal: controller.signal });
 
 for await (const chunk of generator) {
     console.log(chunk);
 }
 ```
 
-**Via `break` no `for await` (durante o stream):**
+Via `break` no loop:
 
 ```typescript
 const generator = await stream.fetchIA();
@@ -464,142 +352,26 @@ let count = 0;
 for await (const chunk of generator) {
     console.log(chunk);
     count++;
-    if (count >= 10) break; // cancela após 10 chunks
+    if (count >= 10) break;
 }
 ```
 
-Quando o consumidor cancela via `break` ou `AbortSignal`, o lock do `bodyReader` é liberado (`releaseLock`) e o timeout de inatividade é limpo automaticamente via bloco `finally`.
-
----
-
-### Salvando a Resposta Completa
-
-Use `onDone` para capturar os dados acumulados quando o stream terminar — ideal para persistir em banco de dados no backend:
+### Salvando resposta completa (onDone)
 
 ```typescript
-import {
-    DeepSeekHeadersBuilder,
-    DeepSeekBodyBuilder,
-    DeepSeekMessageBuilder,
-} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
-
 stream.dataFetch({
-    url: "https://api.deepseek.com/chat/completions",
-    headers: new DeepSeekHeadersBuilder().apiKey("sk-seu-token").build(),
-    body: new DeepSeekBodyBuilder()
-        .model("deepseek-v4-pro")
-        .messages([
-            new DeepSeekMessageBuilder()
-                .role("user")
-                .content("Explique RAG")
-                .build(),
-        ])
-        .stream(true)
-        .build(),
-    extractor: [
-        {
-            fn: ({ data }) => ({
-                content: data.choices?.[0]?.delta?.content ?? "",
-            }),
-        },
-    ],
+    // ... config ...
     onDone: (finalData) => {
-        console.log("Resposta completa:", finalData);
-        // finalData.chunksAcumulated contém a string SSE completa
+        console.log("Resposta completa:", finalData.chunksAcumulated);
+        // Salve em banco de dados, arquivo, etc.
     },
 });
-
-const generator = await stream.fetchIA();
-
-for await (const chunk of generator) {
-    process.stdout.write(chunk);
-}
 ```
 
-O objeto `finalData` contém `chunksAcumulated` com a string SSE completa de todos os chunks. Se nenhum dado foi acumulado (stream vazio), `onDone` não é chamado.
-
----
-
-### Fallback Não-Streaming
-
-Se a resposta não for `text/event-stream`, `fetchIA()` retorna um objeto JSON parseado. Os extratores configurados em `dataFetch()` também são aplicados — basta omitir `stream: true` no body:
-
-```typescript
-stream.dataFetch({
-    url: "https://api.openai.com/v1/chat/completions",
-    headers: { Authorization: "Bearer sk-..." },
-    body: {
-        model: "gpt-4o",
-        messages: [{ role: "user", content: "Olá" }],
-        stream: false,
-    },
-    extractor: [
-        {
-            fn: ({ data }) => ({
-                content: data.choices?.[0]?.message?.content ?? "",
-            }),
-        },
-    ],
-});
-
-const result = await stream.fetchIA();
-
-console.log(result.content); // extraído pelo extrator
-```
-
-**Com builder (DeepSeek):**
-
-```typescript
-import {
-    DeepSeekHeadersBuilder,
-    DeepSeekBodyBuilder,
-    DeepSeekMessageBuilder,
-} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
-
-stream.dataFetch({
-    url: "https://api.deepseek.com/chat/completions",
-    headers: new DeepSeekHeadersBuilder().apiKey("sk-...").build(),
-    body: new DeepSeekBodyBuilder()
-        .model("deepseek-v4-pro")
-        .messages([new DeepSeekMessageBuilder().content("Olá").build()])
-        .stream(false)
-        .build(),
-    extractor: [
-        {
-            fn: ({ data }) => ({
-                content: data.choices?.[0]?.message?.content ?? "",
-            }),
-        },
-    ],
-});
-
-const result = await stream.fetchIA();
-console.log(result.content);
-```
-
-Sem extratores, o JSON cru da API é retornado (ex.: `result.choices[0].message.content`).
-
----
-
-### Pipe para Arquivo
-
-Defina `encodeBytes: true` para receber chunks como `Uint8Array` — útil para escrever em disco:
+### Pipe para arquivo
 
 ```typescript
 import { createWriteStream } from "node:fs";
-
-stream.dataFetch({
-    url: "https://api.openai.com/v1/chat/completions",
-    headers: { Authorization: "Bearer sk-..." },
-    body: {
-        model: "gpt-4o",
-        messages: [{ role: "user", content: "Olá" }],
-        stream: true,
-    },
-    extractor: [
-        { fn: ({ data }) => ({ content: data.choices?.[0]?.delta?.content }) },
-    ],
-});
 
 const generator = await stream.fetchIA({ encodeBytes: true });
 
@@ -610,37 +382,31 @@ for await (const chunk of generator) {
 fileStream.end();
 ```
 
----
+### Fallback não-streaming
 
-### Servidor Proxy HTTP
-
-Encaminhe o stream diretamente para um cliente via Bun, Node.js ou Deno:
+Se a resposta não for `text/event-stream`, `fetchIA()` retorna o JSON parseado diretamente:
 
 ```typescript
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-});
-
-Bun.serve({
-    port: 3000,
-    async fetch(req) {
-        const body = await req.json();
-        const generator = await stream.fetchIA({ encodeBytes: true });
-        const aiStream = ReadableStream.from(generator);
-
-        return new Response(aiStream, {
-            headers: { "Content-Type": "text/event-stream" },
-        });
+    headers: { Authorization: "Bearer sk-seu-token" },
+    body: {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Olá" }],
+        stream: false,
+    },
+    extractors: {
+        defaultExtract: [
+            { key: "content", forExtract: "choices[0].message.content" },
+        ],
     },
 });
+
+const result = await stream.fetchIA();
+console.log(result.content);
 ```
 
----
-
-### Múltiplos Provedores em Paralelo
-
-Cada instância é independente — execute-as concorrentemente:
+### Múltiplos provedores
 
 ```typescript
 const openaiStream = new StreamHttpEvent();
@@ -649,12 +415,6 @@ openaiStream.dataFetch({
     headers: { Authorization: "Bearer sk-openai-..." },
     timeOut: 30000,
 });
-
-import {
-    DeepSeekHeadersBuilder,
-    DeepSeekBodyBuilder,
-    DeepSeekMessageBuilder,
-} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
 
 const deepseekStream = new StreamHttpEvent();
 deepseekStream.dataFetch({
@@ -676,11 +436,164 @@ const [openaiResult, deepseekResult] = await Promise.all([
 
 ---
 
-## Tipos TypeScript
+## Como funciona internamente
+
+### Fluxo geral
+
+```
+dataFetch()
+    |
+    ↓
+fetchIA()
+    |
+    ↓
+Content-Type: text/event-stream?
+    |
+    ├── sim ──▶ streamIA()
+    |               |
+    |               ↓
+    |        while(true) lê ReadableStream (bodyReader.read())
+    |               |
+    |               ↓
+    |        decoder.decode() → buffer.add()
+    |               |
+    |               ↓
+    |        serialize()
+    |               |
+    |               ├── divide buffer por "\n\n" (mensagens SSE)
+    |               ├── para cada mensagem:
+    |               |   ├── detecta "data: [DONE]" → retorna
+    |               |   ├── interpreta linha "data: ..." → JSON.parse
+    |               |   ├── interpreta linha "event: ..." → string
+    |               |   └── GetValueExtract(sseObject, state)
+    |               |           ├── defaultExtract: percorre entries
+    |               |           |   → getValueByPath(sseObject, forExtract)
+    |               |           |   → state.setState({ [key]: value })
+    |               |           └── conditionalxtractor: percorre entries
+    |               |               → getValueByPath(sseObject, path)
+    |               |               → se === condition, state.setState({ [key]: value })
+    |               |
+    |               ↓
+    |        timeout() — reseta timer de inatividade
+    |               |
+    |               ↓
+    |        Monta traficChunk com as keys extraídas do state
+    |               |
+    |               ├── prefixKeys true  → "key: valor\n"
+    |               └── prefixKeys false → "valor\n"
+    |               |
+    |               ↓
+    |        yield chunk (string | Uint8Array)
+    |               |
+    |               ↓
+    |        clearState() — limpa state para o próximo chunk
+    |               |
+    |               ↓
+    |        [loop repete até done ou "data: [DONE]"]
+    |               |
+    |               ↓
+    |        onDone({ chunksAcumulated }) — stream finalizado
+    |               |
+    |               ↓
+    |        finally: releaseLock() + clearTimeout()
+    |
+    └── não ──▶ retorna fetcher.json() (objeto JS)
+```
+
+### Etapas detalhadas
+
+**1. `dataFetch()`** — armazena a configuração (url, headers, body, extractors, timeout, onDone) em propriedades privadas da instância.
+
+**2. `fetchIA()`** — executa `fetch()` com a URL, headers e body configurados. Verifica o `Content-Type` da resposta:
+
+- Se `text/event-stream`: retorna o `AsyncGenerator` de `streamIA()`
+- Caso contrário: retorna `fetcher.json()` (objeto JS parseado)
+
+**3. `streamIA()`** — obtém um `ReadableStreamDefaultReader` e entra em loop infinito. A cada iteração:
+
+- Lê bytes do stream com `bodyReader.read()`
+- Decodifica com `TextDecoder` e adiciona ao buffer interno
+- Chama `serialize()` para processar o buffer
+- Chama `timeout()` para resetar o timer de inatividade
+- Verifica se encontrou `"data: [DONE]"`
+- Monta o chunk com os valores extraídos e faz yield
+
+**4. `bufferControl()`** — closure que mantém um buffer de string. Métodos:
+
+- `getBuffer()`: retorna o buffer atual
+- `setBuffer(data)`: substitui o buffer
+- `add(data)`: concatena dados ao buffer
+
+**5. `serialize()`** — divide o buffer por `\n\n` (delimitador de mensagens SSE). A última parte (incompleta) volta ao buffer. Para cada mensagem completa:
+
+- Divide por `\n`
+- Interpreta linhas começando com `data:` (JSON) e `event:` (string)
+- Se encontra `"data: [DONE]"`, retorna a string imediatamente para interromper o stream
+- Chama `GetValueExtract()` para cada mensagem
+
+**6. `GetValueExtract()`** — para cada objeto SSE parseado, aplica os extractors configurados:
+
+- `defaultExtract`: percorre cada entrada, navega o objeto com `getValueByPath` usando `forExtract`, salva no state com a `key`
+- `conditionalxtractor`: percorre cada entrada, navega o objeto com `getValueByPath` usando `path`, e só salva no state se o valor for estritamente igual a `condition`
+
+**7. `getValueByPath(obj, path)`** — navega por um objeto usando um caminho como `"data.choices[0].delta.content"`. Suporta pontos e colchetes. Retorna `undefined` se o caminho não existir.
+
+**8. `stateLocal()`** — closure baseada em `Map<string, unknown>` que mantém o estado entre chamadas. Métodos:
+
+- `getStateOne(key)`: retorna o valor de uma chave
+- `setState(newState)`: mescla um objeto no state
+- `clearState()`: limpa todo o state
+
+**9. `timeOutControl()` + `timeout()`** — gerenciam um timer de inatividade. Se o tempo entre chunks exceder `timeOut`, o `bodyReader` é cancelado. O timer reseta a cada chunk.
+
+**10. Montagem do chunk** — após extrair os valores, o código:
+
+- Pega todas as keys de `defaultExtract` + `conditionalxtractor`
+- Busca cada valor no state via `getStateOne()`
+- Se nenhuma key tiver valor (`hasValue === false`), o chunk é pulado (`continue`)
+- Monta a string de saída:
+    - `prefixKeys: true` → `key: valor\n` (ex: `content: "Olá"\n`)
+    - `prefixKeys: false` → `valor\n` (ex: `"Olá"\n`)
+- Adiciona `\n` ao final, acumula em `chunksAcumulated`, e faz yield
+- Valores string são usados diretamente; objetos/arrays/números são serializados com `JSON.stringify`
+
+**11. `clearState()`** — após yield, o state é completamente limpo para o próximo chunk não acumular dados obsoletos.
+
+**12. Finalização** — quando o stream termina (reader retorna `done: true` ou mensagem `"data: [DONE]"`):
+
+- Se `chunksAcumulated` não estiver vazio, `onDone` é chamado com `{ chunksAcumulated }`
+- No `finally`: `releaseLock()` no reader e `clearTimeout()` no timer de inatividade
+
+---
+
+## Builders por Provedor
+
+### DeepSeek
+
+Importe de `@felipe-lib/stream-http-event/builders-providers/deepseek`:
+
+- `DeepSeekHeadersBuilder` — headers com apiKey
+- `DeepSeekBodyBuilder` — corpo da requisição completo (model, messages, stream, thinking, tools, etc.)
+- `DeepSeekMessageBuilder` — mensagem individual (role, content, tool_call_id, prefix, reasoning_content)
+- `DeepSeekThinkingBuilder` — configuração de thinking (type, reasoning_effort)
+- `DeepSeekResponseFormatBuilder` — formato de resposta (text, json_object)
+- `DeepSeekToolBuilder` — definição de ferramenta (name, description, parameters, strict)
+- `DeepSeekToolParametersBuilder` — parâmetros da ferramenta (properties, required)
+
+### Anthropic
+
+Importe de `@felipe-lib/stream-http-event/builders-providers/anthropic`:
+
+- `AnthropicHeadersBuilder` — headers com apiKey e versão
+- `AnthropicBodyBuilder` — corpo da requisição (model, max_tokens, messages, system, thinking, etc.)
+- `AnthropicMessageBuilder` — mensagem individual (role, content)
+- `AnthropicThinkingBuilder` — configuração de thinking (type, budget_tokens)
+
+---
+
+## Tipos TypeScript públicos
 
 ```typescript
-// --- Tipos públicos ---
-
 interface dataFetchType<
     H extends Record<string, string> = Record<string, string>,
     B extends Record<string, unknown> = Record<string, unknown>,
@@ -688,66 +601,82 @@ interface dataFetchType<
     url: string;
     headers?: H;
     timeOut?: number;
-    extractor?: extractorType[];
     onDone?: (finalData: Record<string, unknown>) => void;
     body?: B;
+    extractors: ExtractorsType;
 }
 
 interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
-    formatSSE?: boolean;
+    prefixKeys?: boolean;
 }
 
-interface extractorType<
-    TData extends object = Record<string, unknown>,
-    TEvent = string,
-> {
-    fn: ({
-        data,
-        event,
-    }: {
-        data: TData;
-        event?: TEvent;
-    }) => Record<string, unknown>;
+interface ExtractorsType {
+    defaultExtract: extract[];
+    conditionalxtractor?: condicionalExtract[];
+}
+
+interface extract {
+    key: string;
+    forExtract: string;
+}
+
+interface condicionalExtract {
+    key: string;
+    path: string;
+    condition: string;
 }
 ```
 
 ---
 
-## Licença
+## Projeto Estudantil
 
-ISC
+Este é um projeto de estudo e aprendizado. Está funcional e em uso, mas pode conter imperfeições. Contribuições e sugestões são bem-vindas!
 
 ---
 
 # English
 
+---
+
 ## Table of Contents
 
+- [Installation](#installation)
 - [Quick Start](#quick-start)
-- [Installation](#installation-1)
-- [Core Concepts](#core-concepts)
-- [API Reference](#api-reference-1)
+- [What Changed?](#what-changed)
+- [API Reference](#api-reference)
     - [`dataFetch()`](#datafetch-1)
+    - [`ExtractorsType`](#extractortype-1)
     - [`fetchIA()`](#fetchia-1)
-    - [`extractorType`](#extractortype-1)
-- [Guides](#guides-1)
-    - [Basic Streaming (OpenAI)](#basic-streaming-openai)
-    - [OpenAI-Compatible Providers](#openai-compatible-providers-groq-together-ai-fireworks-)
-- [Per-Provider Extractors (Anthropic)](#per-provider-extractors-anthropic)
-- [Per-Provider Builders (DeepSeek)](#per-provider-builders-deepseek)
-    - [Per-Provider Builders (Anthropic)](#per-provider-builders-anthropic)
-- [Cancellation](#cancellation-1)
-    - [Saving the Full Response](#saving-the-full-response)
-    - [Non-Streaming Fallback](#non-streaming-fallback-1)
-    - [Piping to File](#piping-to-file-1)
-    - [HTTP Proxy Server](#http-proxy-server-1)
-    - [Multiple Providers in Parallel](#multiple-providers-in-parallel-1)
-- [TypeScript Types](#typescript-types-1)
-- [Internals](#internals)
-- [License](#license-1)
+- [Examples](#examples)
+    - [OpenAI Streaming](#openai-streaming)
+    - [DeepSeek with Builders](#deepseek-with-builders)
+    - [Anthropic](#anthropic-2)
+    - [Output without prefixKeys](#output-without-prefixkeys)
+    - [Cancellation](#cancellation)
+    - [Saving the Full Response (onDone)](#saving-the-full-response-ondon)
+    - [Pipe to File](#pipe-to-file)
+    - [Non-Streaming Fallback](#non-streaming-fallback)
+    - [Multiple Providers](#multiple-providers)
+- [How It Works Internally](#how-it-works-internally)
+- [Provider Builders](#provider-builders)
+    - [DeepSeek](#deepseek-1)
+    - [Anthropic](#anthropic-3)
+- [Public TypeScript Types](#public-typescript-types)
+- [Student Project](#student-project)
+
+---
+
+## Installation
+
+```bash
+npm install @felipe-lib/stream-http-event
+# or
+pnpm add @felipe-lib/stream-http-event
+```
 
 ---
 
@@ -758,7 +687,6 @@ import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
 
 const stream = new StreamHttpEvent();
 
-// 1. Configure
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
     headers: { Authorization: "Bearer sk-your-token" },
@@ -767,25 +695,184 @@ stream.dataFetch({
         messages: [{ role: "user", content: "Hello!" }],
         stream: true,
     },
-    extractor: [
-        {
-            fn: ({ data }) => ({
-                content: data.choices?.[0]?.delta?.content ?? "",
-            }),
-        },
-    ],
+    extractors: {
+        defaultExtract: [
+            { key: "content", forExtract: "data.choices[0].delta.content" },
+        ],
+    },
 });
 
-// 2. Request
 const generator = await stream.fetchIA();
 
-// 3. Read (chunk is a string in `data: {...}\n\n` format)
 for await (const chunk of generator) {
     process.stdout.write(chunk);
 }
 ```
 
-**With typed builder (DeepSeek):**
+Each chunk output looks like:
+
+```
+content: "Hello"\n
+
+```
+
+---
+
+## What Changed?
+
+This section documents the main changes from the previous API version.
+
+### Extractors
+
+| Before                                                  | After                                                                                               |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `extractor: [{ fn: ({ data }) => ({ content: ... }) }]` | `extractors: { defaultExtract: [{ key: "content", forExtract: "data.choices[0].delta.content" }] }` |
+
+The old API used JavaScript functions to extract data. The new one uses **path strings** that navigate the JSON object, making configuration declarative and serializable.
+
+### Key lookup in stream
+
+| Before                                                                                          | After                                                                                                                          |
+| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Hardcoded `state.getStateOne("extracted")` — only worked if the extractor key was `"extracted"` | **Dynamic loop** — iterates over **all** keys in `defaultExtract` and `conditionalxtractor`, building the output with each one |
+
+### Output format
+
+| Before                                                     | After                                                                         |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| Always `data: {...}\nevent: ...\n\n` (standard SSE format) | Controlled by `prefixKeys`: `true` → `key: value\n`, `false` → just `value\n` |
+
+### Naming
+
+- `formatSSE` renamed to **`prefixKeys`** — accurately describes what it does
+
+### Removed code
+
+- `onData` and `onEvent` — declared but never called
+- `getState`, `clearStateByKey`, `hasStateByKey` — unused methods in local state
+- `try { ... } catch (e) { throw e }` — redundant blocks
+
+### Fixed bugs
+
+- `if (value)` is now `if (value !== undefined)` — values `0`, `""`, `false` are no longer ignored
+- `types.anthropic.ts`: field `ccontent` corrected to `content` (typo)
+- `types.anthropic.ts`: duplicate removed from union type
+
+---
+
+## API Reference
+
+### `dataFetch()`
+
+Configures the instance. Must be called before `fetchIA()`.
+
+```typescript
+stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
+```
+
+| Parameter    | Type                                           | Required | Description                                                          |
+| ------------ | ---------------------------------------------- | -------- | -------------------------------------------------------------------- |
+| `url`        | `string`                                       | Yes      | AI provider endpoint                                                 |
+| `headers`    | `Record<string, string>`                       | No       | HTTP headers. Can be typed via provider builder                      |
+| `body`       | `Record<string, unknown>`                      | No       | Request body (serialized as JSON)                                    |
+| `timeOut`    | `number`                                       | No       | Inactivity timeout in milliseconds. Resets on each chunk             |
+| `onDone`     | `(finalData: Record<string, unknown>) => void` | No       | Callback fired when the stream ends. Receives `{ chunksAcumulated }` |
+| `extractors` | `ExtractorsType`                               | Yes      | Extractor configuration                                              |
+
+---
+
+### `ExtractorsType`
+
+```typescript
+interface ExtractorsType {
+    defaultExtract: extract[];
+    conditionalxtractor?: condicionalExtract[];
+}
+
+interface extract {
+    key: string;
+    forExtract: string;
+}
+
+interface condicionalExtract {
+    key: string;
+    path: string;
+    condition: string;
+}
+```
+
+**`defaultExtract`** — always applied to each SSE message:
+
+- `key`: the output key name, also used internally in state
+- `forExtract`: JSON path to navigate to the desired value (e.g. `"data.choices[0].delta.content"`)
+- Supports dot and bracket notation: `"data.choices[0].delta.content"`
+
+**`conditionalxtractor`** — only applied if the condition is met:
+
+- `key`: output key name
+- `path`: JSON path to navigate to the value
+- `condition`: expected value. If the value at `path` strictly equals `condition`, the value is extracted
+
+**Key merging:** keys from both `defaultExtract` and `conditionalxtractor` are combined. If both arrays have entries, **all** keys are used in the output.
+
+---
+
+### `fetchIA()`
+
+Executes the HTTP request and returns an `AsyncGenerator` or a parsed JSON object.
+
+```typescript
+stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, unknown>>
+```
+
+| Parameter     | Type          | Default  | Description                                                                |
+| ------------- | ------------- | -------- | -------------------------------------------------------------------------- |
+| `method`      | `string`      | `"POST"` | HTTP method                                                                |
+| `signal`      | `AbortSignal` | —        | AbortController signal for cancellation                                    |
+| `encodeBytes` | `boolean`     | `false`  | If `true`, yielded chunks are `Uint8Array`. If `false`, chunks are strings |
+| `prefixKeys`  | `boolean`     | `true`   | If `true`, output as `key: value\n`. If `false`, value only                |
+
+**Returns:**
+
+- `AsyncGenerator<string | Uint8Array, void, unknown>` — if `Content-Type` is `text/event-stream`
+- `Record<string, unknown>` — parsed JSON for non-streaming responses
+
+---
+
+## Examples
+
+### OpenAI Streaming
+
+```typescript
+const stream = new StreamHttpEvent();
+
+stream.dataFetch({
+    url: "https://api.openai.com/v1/chat/completions",
+    headers: {
+        Authorization: "Bearer sk-your-token",
+        "Content-Type": "application/json",
+    },
+    timeOut: 30000,
+    body: {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Explain SSE" }],
+        stream: true,
+    },
+    extractors: {
+        defaultExtract: [
+            { key: "content", forExtract: "data.choices[0].delta.content" },
+        ],
+    },
+});
+
+const generator = await stream.fetchIA();
+
+for await (const chunk of generator) {
+    process.stdout.write(chunk);
+}
+```
+
+### DeepSeek with Builders
 
 ```typescript
 import { StreamHttpEvent } from "@felipe-lib/stream-http-event";
@@ -805,13 +892,11 @@ stream.dataFetch({
         .messages([new DeepSeekMessageBuilder().content("Hello!").build()])
         .stream(true)
         .build(),
-    extractor: [
-        {
-            fn: ({ data }) => ({
-                content: data.choices?.[0]?.delta?.content ?? "",
-            }),
-        },
-    ],
+    extractors: {
+        defaultExtract: [
+            { key: "content", forExtract: "data.choices[0].delta.content" },
+        ],
+    },
 });
 
 const generator = await stream.fetchIA();
@@ -821,354 +906,73 @@ for await (const chunk of generator) {
 }
 ```
 
----
+### Anthropic
 
-## Installation
-
-```bash
-npm install @felipe-lib/stream-http-event
-# or
-pnpm add @felipe-lib/stream-http-event
-```
-
----
-
-## Core Concepts
-
-**What problem this solves.** AI providers return streaming responses as raw SSE bytes. Parsing those manually means dealing with buffering, line splitting, `[DONE]` detection, and per-provider response shapes. This library handles all of that and gives you a clean `AsyncGenerator`.
-
-**Two-step pattern.**
-
-1. `dataFetch()` — configure the instance (URL, headers, body, timeout, extractors, `onDone` callback). Call once.
-2. `fetchIA()` — execute the request. Returns an `AsyncGenerator` (if the response is `text/event-stream`) or a parsed JSON object (fallback for non-streaming).
-
-**Extractors** are functions `({ data, event? }) => Record<string, unknown>` that map data into the shape you want. In streaming, extractors process each chunk before yielding, transforming the data via the `fn` function. In the non-streaming fallback, extractors are applied sequentially over the parsed JSON (no `event`).
-
----
-
-## API Reference
-
-### `dataFetch()`
-
-Configures the instance. Must be called before `fetchIA()`.
-
-```typescript
-stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
-```
-
-| Parameter   | Type                                                        | Required | Description                                                                                                                                                           |
-| ----------- | ----------------------------------------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `url`       | `string`                                                    | Yes      | AI provider endpoint                                                                                                                                                  |
-| `headers`   | `Record<string, string>` or provider-specific Builder type  | No       | HTTP headers (Authorization, Content-Type, etc.). Automatically typed when using a provider builder.                                                                  |
-| `timeOut`   | `number`                                                    | No       | Inactivity timeout in milliseconds. Resets on each chunk. No total-time limit.                                                                                        |
-| `extractor` | `extractorType[]`                                           | No       | Default extractors for every `fetchIA()` call. Process data in both streaming and non-streaming fallback.                                                             |
-| `onDone`    | `(finalData: Record<string, unknown>) => void`              | No       | Callback fired when the **stream** ends (streaming mode only). Receives `{ chunksAcumulated }` with the full accumulated SSE string. Useful for saving to a database. |
-| `body`      | `Record<string, unknown>` or provider-specific Builder type | No       | Request body (serialized as JSON). Configure here or use a provider builder for auto-completion of all fields.                                                        |
-
----
-
-### `fetchIA()`
-
-Executes the HTTP request and returns either an `AsyncGenerator` or a parsed JSON object.
-
-```typescript
-stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, unknown>>
-```
-
-| Parameter     | Type          | Required | Description                                                                                                         |
-| ------------- | ------------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
-| `method`      | `string`      | No       | HTTP method. Default: `"POST"`                                                                                      |
-| `signal`      | `AbortSignal` | No       | AbortController signal for request cancellation                                                                     |
-| `encodeBytes` | `boolean`     | No       | If `true`, yielded chunks are `Uint8Array`. If `false`/`undefined`, chunks are strings in the configured format.    |
-| `formatSSE`   | `boolean`     | No       | If `true` (default), output is SSE-formatted (`data: {...}\n\n`). If `false`, raw data string with trailing `\n\n`. |
-
-**Returns:**
-
-- `AsyncGenerator<string | Uint8Array, void, unknown>` — if `Content-Type` is `text/event-stream`. Consume with `for await (const chunk of generator)`.
-- `Record<string, unknown>` — the parsed JSON response for non-streaming requests. If extractors are configured in `dataFetch()`, they are applied sequentially over the JSON.
-
-**Errors:**
-
-- Throws if `dataFetch()` was not called (no URL configured).
-- Throws if the HTTP response is not OK (`!fetcher.ok`).
-- Throws if the response has no body.
-
----
-
-### `extractorType`
-
-Each extractor function receives the parsed `data` and `event` (optional) from the current chunk.
-
-```typescript
-type extractorType<
-    TData extends object = Record<string, unknown>,
-    TEvent = string,
-> = {
-    fn: ({
-        data,
-        event,
-    }: {
-        data: TData;
-        event?: TEvent;
-    }) => Record<string, unknown>;
-};
-```
-
-**Behavior:**
-
-- `event` is **optional** — absent in non-streaming JSON responses. When present, it's a string (e.g. `"ping"`, `"content_block_delta"`).
-- **Streaming:** output is the data processed by extractors, formatted as an SSE string (`data: {...}\nevent: ...\n\n`) or, if `formatSSE: false`, as a string with trailing `\n\n`. All stream data accumulated is delivered to `onDone` as `{ chunksAcumulated }`.
-- **JSON (non-streaming):** all extractors are applied in sequence. Returning `{}` feeds an empty object to the next extractor.
-
----
-
-## Guides
-
-### Basic Streaming (OpenAI)
+Anthropic uses a different SSE format. Example with `defaultExtract` + `conditionalxtractor`:
 
 ```typescript
 const stream = new StreamHttpEvent();
 
-stream.dataFetch({
-    url: "https://api.openai.com/v1/chat/completions",
-    headers: {
-        "Content-Type": "application/json",
-        Authorization: "Bearer sk-your-token",
-    },
-    timeOut: 30000,
-    body: {
-        model: "gpt-4o",
-        messages: [{ role: "user", content: "Explain SSE" }],
-        stream: true,
-    },
-    extractor: [
-        {
-            fn: ({ data }) => {
-                const content = data.choices?.[0]?.delta?.content;
-                return content ? { content } : {};
-            },
-        },
-    ],
-});
-
-const generator = await stream.fetchIA();
-
-for await (const chunk of generator) {
-    process.stdout.write(chunk);
-}
-```
-
----
-
-### OpenAI-Compatible Providers (Groq, Together AI, Fireworks, ...)
-
-Any provider following the `{ messages, model, stream, temperature, ... }` format works with this library — just swap the URL and auth headers.
-
-**Groq:**
-
-````typescript
-stream.dataFetch({
-    url: "https://api.groq.com/openai/v1/chat/completions",
-    headers: {
-        "Authorization": "Bearer gsk-your-token",
-        "Content-Type": "application/json"
-    },
-    body: {
-        model: "llama-3.3-70b-versatile",
-        messages: [{ role: "user", content: "Hello" }],
-        stream: true
-    },
-    extractor: [{
-        fn: ({ data }) => ({
-            content: data.choices?.[0]?.delta?.content ?? ""
-        })
-    }]
-});
-
-const generator = await stream.fetchIA();
-for await (const chunk of generator) {
-    process.stdout.write(chunk);
-}
-```
-
-For typed builders with any OpenAI-compatible provider, see the [Per-Provider Builders (DeepSeek / OpenAI-compatible)](#per-provider-builders-deepseek--openai-compatible) section — just swap the URL.
-
----
-
-### Per-Provider Extractors (Anthropic)
-
-Anthropic uses a different SSE shape — adapt the extractor:
-
-```typescript
-const stream = new StreamHttpEvent();
 stream.dataFetch({
     url: "https://api.anthropic.com/v1/messages",
     headers: {
         "x-api-key": "sk-ant-your-token",
         "anthropic-version": "2023-06-01",
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     },
     timeOut: 30000,
     body: {
         model: "claude-sonnet-4-20250514",
         max_tokens: 1024,
         messages: [{ role: "user", content: "Hello" }],
-        stream: true
+        stream: true,
     },
-    extractor: [{
-        fn: ({ data }) => {
-            if (data.type === "content_block_delta") {
-                return { text: data.delta?.text };
-            }
-            return {};
-        }
-    }]
-});
-
-const generator = await stream.fetchIA();
-for await (const chunk of generator) {
-    process.stdout.write(chunk);
-}
-```
-
----
-
-### Per-Provider Builders (DeepSeek / OpenAI-compatible)
-
-Use builders to construct headers and body with exact types and autocomplete — no memorizing keys or typing manually. **Works with any provider that follows the OpenAI format** (Groq, Together AI, Fireworks, etc.), just swap the URL:
-
-> **Compatible with:** Groq, Together AI, Fireworks, Perplexity, xAI, and any API using the `{ messages, model, stream, temperature, ... }` shape. Just adjust the URL in `dataFetch()`.
-
-```typescript
-import {
-    DeepSeekHeadersBuilder, DeepSeekBodyBuilder, DeepSeekMessageBuilder,
-    DeepSeekThinkingBuilder, DeepSeekToolBuilder, DeepSeekToolParametersBuilder,
-} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
-
-const stream = new StreamHttpEvent();
-
-stream.dataFetch({
-    url: "https://api.deepseek.com/chat/completions",
-    headers: new DeepSeekHeadersBuilder().apiKey("sk-your-token").build(),
-    body: new DeepSeekBodyBuilder()
-        .model("deepseek-v4-pro")
-        .messages([
-            new DeepSeekMessageBuilder().role("system").content("You are an assistant").build(),
-            new DeepSeekMessageBuilder().role("user").content("What's the weather?").build(),
-        ])
-        .thinking(
-            new DeepSeekThinkingBuilder().type("enabled").reasoningEffort("high").build()
-        )
-        .tools([
-            new DeepSeekToolBuilder()
-                .name("getWeather")
-                .description("Get the current weather for a city")
-                .parameters(
-                    new DeepSeekToolParametersBuilder()
-                        .property("city", { type: "string", description: "City name" })
-                        .required("city")
-                        .build()
-                )
-                .build(),
-        ])
-        .temperature(0.7)
-        .stream(true)
-        .build(),
-    extractor: [{
-        fn: ({ data }) => ({
-            content: data.choices?.[0]?.delta?.content ?? ""
-        })
-    }],
-});
-
-const generator = await stream.fetchIA();
-for await (const chunk of generator) {
-    process.stdout.write(chunk);
-}
-````
-
-Each builder follows the corresponding interface. If the interface changes, the builder automatically keeps pace. `.build()` returns the exact typed object for `dataFetch()`.
-
----
-
-### Per-Provider Builders (Anthropic)
-
-> **Under development.** Anthropic builders are in early stages. The type API is defined, but not all Anthropic Messages API features are covered yet.
-
-Use builders to construct headers and body with exact types for the [Anthropic Messages API](https://docs.anthropic.com/en/api/messages):
-
-```typescript
-import {
-    AnthropicHeadersBuilder,
-    AnthropicBodyBuilder,
-    AnthropicMessageBuilder,
-    AnthropicThinkingBuilder,
-} from "@felipe-lib/stream-http-event/builders-providers/anthropic";
-
-const stream = new StreamHttpEvent();
-
-stream.dataFetch({
-    url: "https://api.anthropic.com/v1/messages",
-    headers: new AnthropicHeadersBuilder().apiKey("sk-ant-your-token").build(),
-    body: new AnthropicBodyBuilder()
-        .model("claude-sonnet-4-20250514")
-        .maxTokens(1024)
-        .messages([
-            new AnthropicMessageBuilder()
-                .role("user")
-                .content("Hello, Claude!")
-                .build(),
-        ])
-        .system("You are a helpful assistant.")
-        .thinking(
-            new AnthropicThinkingBuilder()
-                .type("enabled")
-                .budgetTokens(2048)
-                .build(),
-        )
-        .stream(true)
-        .build(),
-    extractor: [
-        {
-            fn: ({ data }) => {
-                if (data.type === "content_block_delta") {
-                    return { text: data.delta?.text ?? "" };
-                }
-                return {};
+    extractors: {
+        defaultExtract: [{ key: "text", forExtract: "data.delta.text" }],
+        conditionalxtractor: [
+            {
+                key: "eventType",
+                path: "data.type",
+                condition: "content_block_delta",
             },
-        },
-    ],
+        ],
+    },
 });
 
 const generator = await stream.fetchIA();
+
 for await (const chunk of generator) {
     process.stdout.write(chunk);
 }
 ```
 
-Each builder follows the `types.anthropic.ts` interface. `.build()` returns the exact typed object for `dataFetch()`.
+### Output without prefixKeys
 
----
+```typescript
+const generator = await stream.fetchIA({ prefixKeys: false });
+
+for await (const chunk of generator) {
+    // chunk: "Hello"\n  instead of  content: "Hello"\n
+    process.stdout.write(chunk);
+}
+```
 
 ### Cancellation
 
-**Via AbortController (before the request starts):**
+Via AbortController:
 
 ```typescript
 const controller = new AbortController();
-
 setTimeout(() => controller.abort(), 5000);
 
-const generator = await stream.fetchIA({
-    signal: controller.signal,
-});
+const generator = await stream.fetchIA({ signal: controller.signal });
 
 for await (const chunk of generator) {
     console.log(chunk);
 }
 ```
 
-**Via `break` in `for await` (mid-stream):**
+Via `break` in the loop:
 
 ```typescript
 const generator = await stream.fetchIA();
@@ -1177,142 +981,26 @@ let count = 0;
 for await (const chunk of generator) {
     console.log(chunk);
     count++;
-    if (count >= 10) break; // cancels after 10 chunks
+    if (count >= 10) break;
 }
 ```
 
-When the consumer cancels via `break` or `AbortSignal`, the internal `bodyReader` lock is released (`releaseLock`) and the inactivity timeout is cleared automatically via the `finally` block.
-
----
-
-### Saving the Full Response
-
-Use `onDone` to capture the accumulated data when the stream finishes — ideal for persisting to a database on the backend:
+### Saving the Full Response (onDone)
 
 ```typescript
-import {
-    DeepSeekHeadersBuilder,
-    DeepSeekBodyBuilder,
-    DeepSeekMessageBuilder,
-} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
-
 stream.dataFetch({
-    url: "https://api.deepseek.com/chat/completions",
-    headers: new DeepSeekHeadersBuilder().apiKey("sk-your-token").build(),
-    body: new DeepSeekBodyBuilder()
-        .model("deepseek-v4-pro")
-        .messages([
-            new DeepSeekMessageBuilder()
-                .role("user")
-                .content("Explain RAG")
-                .build(),
-        ])
-        .stream(true)
-        .build(),
-    extractor: [
-        {
-            fn: ({ data }) => ({
-                content: data.choices?.[0]?.delta?.content ?? "",
-            }),
-        },
-    ],
+    // ... config ...
     onDone: (finalData) => {
-        console.log("Full response:", finalData);
-        // finalData.chunksAcumulated contains the full SSE string
+        console.log("Full response:", finalData.chunksAcumulated);
+        // Save to database, file, etc.
     },
 });
-
-const generator = await stream.fetchIA();
-
-for await (const chunk of generator) {
-    process.stdout.write(chunk);
-}
 ```
 
-The `finalData` object contains `chunksAcumulated` with the full accumulated SSE string. If no data was accumulated (empty stream), `onDone` is not called.
-
----
-
-### Non-Streaming Fallback
-
-If the response is not `text/event-stream`, `fetchIA()` returns a parsed JSON object. Extractors configured in `dataFetch()` are also applied — simply omit `stream: true` from the body:
-
-```typescript
-stream.dataFetch({
-    url: "https://api.openai.com/v1/chat/completions",
-    headers: { Authorization: "Bearer sk-..." },
-    body: {
-        model: "gpt-4o",
-        messages: [{ role: "user", content: "Hello" }],
-        stream: false,
-    },
-    extractor: [
-        {
-            fn: ({ data }) => ({
-                content: data.choices?.[0]?.message?.content ?? "",
-            }),
-        },
-    ],
-});
-
-const result = await stream.fetchIA();
-
-console.log(result.content); // extracted by the extractor
-```
-
-**With builder (DeepSeek):**
-
-```typescript
-import {
-    DeepSeekHeadersBuilder,
-    DeepSeekBodyBuilder,
-    DeepSeekMessageBuilder,
-} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
-
-stream.dataFetch({
-    url: "https://api.deepseek.com/chat/completions",
-    headers: new DeepSeekHeadersBuilder().apiKey("sk-...").build(),
-    body: new DeepSeekBodyBuilder()
-        .model("deepseek-v4-pro")
-        .messages([new DeepSeekMessageBuilder().content("Hello").build()])
-        .stream(false)
-        .build(),
-    extractor: [
-        {
-            fn: ({ data }) => ({
-                content: data.choices?.[0]?.message?.content ?? "",
-            }),
-        },
-    ],
-});
-
-const result = await stream.fetchIA();
-console.log(result.content);
-```
-
-Without extractors, the raw API JSON is returned (e.g. `result.choices[0].message.content`).
-
----
-
-### Piping to File
-
-Set `encodeBytes: true` to receive `Uint8Array` chunks — useful for writing to disk:
+### Pipe to File
 
 ```typescript
 import { createWriteStream } from "node:fs";
-
-stream.dataFetch({
-    url: "https://api.openai.com/v1/chat/completions",
-    headers: { Authorization: "Bearer sk-..." },
-    body: {
-        model: "gpt-4o",
-        messages: [{ role: "user", content: "Hello" }],
-        stream: true,
-    },
-    extractor: [
-        { fn: ({ data }) => ({ content: data.choices?.[0]?.delta?.content }) },
-    ],
-});
 
 const generator = await stream.fetchIA({ encodeBytes: true });
 
@@ -1323,37 +1011,31 @@ for await (const chunk of generator) {
 fileStream.end();
 ```
 
----
+### Non-Streaming Fallback
 
-### HTTP Proxy Server
-
-Forward the stream directly to a client via Bun, Node.js, or Deno:
+If the response is not `text/event-stream`, `fetchIA()` returns the parsed JSON directly:
 
 ```typescript
 stream.dataFetch({
     url: "https://api.openai.com/v1/chat/completions",
-    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}` },
-});
-
-Bun.serve({
-    port: 3000,
-    async fetch(req) {
-        const body = await req.json();
-        const generator = await stream.fetchIA({ encodeBytes: true });
-        const aiStream = ReadableStream.from(generator);
-
-        return new Response(aiStream, {
-            headers: { "Content-Type": "text/event-stream" },
-        });
+    headers: { Authorization: "Bearer sk-your-token" },
+    body: {
+        model: "gpt-4o",
+        messages: [{ role: "user", content: "Hello" }],
+        stream: false,
+    },
+    extractors: {
+        defaultExtract: [
+            { key: "content", forExtract: "choices[0].message.content" },
+        ],
     },
 });
+
+const result = await stream.fetchIA();
+console.log(result.content);
 ```
 
----
-
-### Multiple Providers in Parallel
-
-Each instance is independent — run them concurrently:
+### Multiple Providers
 
 ```typescript
 const openaiStream = new StreamHttpEvent();
@@ -1362,12 +1044,6 @@ openaiStream.dataFetch({
     headers: { Authorization: "Bearer sk-openai-..." },
     timeOut: 30000,
 });
-
-import {
-    DeepSeekHeadersBuilder,
-    DeepSeekBodyBuilder,
-    DeepSeekMessageBuilder,
-} from "@felipe-lib/stream-http-event/builders-providers/deepseek";
 
 const deepseekStream = new StreamHttpEvent();
 deepseekStream.dataFetch({
@@ -1389,11 +1065,164 @@ const [openaiResult, deepseekResult] = await Promise.all([
 
 ---
 
-## TypeScript Types
+## How It Works Internally
+
+### General flow
+
+```
+dataFetch()
+    |
+    ↓
+fetchIA()
+    |
+    ↓
+Content-Type: text/event-stream?
+    |
+    ├── yes ──▶ streamIA()
+    |               |
+    |               ↓
+    |        while(true) reads ReadableStream (bodyReader.read())
+    |               |
+    |               ↓
+    |        decoder.decode() → buffer.add()
+    |               |
+    |               ↓
+    |        serialize()
+    |               |
+    |               ├── splits buffer by "\n\n" (SSE messages)
+    |               ├── for each message:
+    |               |   ├── detects "data: [DONE]" → returns
+    |               |   ├── parses "data: ..." line → JSON.parse
+    |               |   ├── parses "event: ..." line → string
+    |               |   └── GetValueExtract(sseObject, state)
+    |               |           ├── defaultExtract: iterates entries
+    |               |           |   → getValueByPath(sseObject, forExtract)
+    |               |           |   → state.setState({ [key]: value })
+    |               |           └── conditionalxtractor: iterates entries
+    |               |               → getValueByPath(sseObject, path)
+    |               |               → if === condition, state.setState({ [key]: value })
+    |               |
+    |               ↓
+    |        timeout() — resets inactivity timer
+    |               |
+    |               ↓
+    |        Builds traficChunk with extracted keys from state
+    |               |
+    |               ├── prefixKeys true  → "key: value\n"
+    |               └── prefixKeys false → "value\n"
+    |               |
+    |               ↓
+    |        yield chunk (string | Uint8Array)
+    |               |
+    |               ↓
+    |        clearState() — clears state for next chunk
+    |               |
+    |               ↓
+    |        [loop repeats until done or "data: [DONE]"]
+    |               |
+    |               ↓
+    |        onDone({ chunksAcumulated }) — stream finished
+    |               |
+    |               ↓
+    |        finally: releaseLock() + clearTimeout()
+    |
+    └── no ──▶ returns fetcher.json() (JS object)
+```
+
+### Detailed steps
+
+**1. `dataFetch()`** — stores the configuration (url, headers, body, extractors, timeout, onDone) in private instance properties.
+
+**2. `fetchIA()`** — executes `fetch()` with the configured URL, headers and body. Checks the response `Content-Type`:
+
+- If `text/event-stream`: returns the `AsyncGenerator` from `streamIA()`
+- Otherwise: returns `fetcher.json()` (parsed JS object)
+
+**3. `streamIA()`** — obtains a `ReadableStreamDefaultReader` and enters an infinite loop. Each iteration:
+
+- Reads bytes from the stream with `bodyReader.read()`
+- Decodes with `TextDecoder` and adds to the internal buffer
+- Calls `serialize()` to process the buffer
+- Calls `timeout()` to reset the inactivity timer
+- Checks for `"data: [DONE]"`
+- Builds the chunk with extracted values and yields
+
+**4. `bufferControl()`** — closure maintaining a string buffer. Methods:
+
+- `getBuffer()`: returns the current buffer
+- `setBuffer(data)`: replaces the buffer
+- `add(data)`: appends data to the buffer
+
+**5. `serialize()`** — splits the buffer by `\n\n` (SSE message delimiter). The last (incomplete) part goes back to the buffer. For each complete message:
+
+- Splits by `\n`
+- Parses lines starting with `data:` (JSON) and `event:` (string)
+- If `"data: [DONE]"` is found, returns immediately to stop the stream
+- Calls `GetValueExtract()` for each message
+
+**6. `GetValueExtract()`** — for each parsed SSE object, applies the configured extractors:
+
+- `defaultExtract`: iterates each entry, navigates the object with `getValueByPath` using `forExtract`, saves to state with `key`
+- `conditionalxtractor`: iterates each entry, navigates the object with `getValueByPath` using `path`, and only saves to state if the value strictly equals `condition`
+
+**7. `getValueByPath(obj, path)`** — navigates an object using a path like `"data.choices[0].delta.content"`. Supports dots and brackets. Returns `undefined` if the path doesn't exist.
+
+**8. `stateLocal()`** — `Map<string, unknown>`-based closure that maintains state between calls. Methods:
+
+- `getStateOne(key)`: returns the value for a key
+- `setState(newState)`: merges an object into state
+- `clearState()`: clears all state
+
+**9. `timeOutControl()` + `timeout()`** — manage an inactivity timer. If the time between chunks exceeds `timeOut`, the `bodyReader` is cancelled. The timer resets on each chunk.
+
+**10. Chunk assembly** — after extracting values, the code:
+
+- Gets all keys from `defaultExtract` + `conditionalxtractor`
+- Looks up each value in state via `getStateOne()`
+- If no key has a value (`hasValue === false`), the chunk is skipped (`continue`)
+- Builds the output string:
+    - `prefixKeys: true` → `key: value\n` (e.g. `content: "Hello"\n`)
+    - `prefixKeys: false` → `value\n` (e.g. `"Hello"\n`)
+- Adds `\n` at the end, accumulates into `chunksAcumulated`, and yields
+- String values are used directly; objects/arrays/numbers are serialized with `JSON.stringify`
+
+**11. `clearState()`** — after yielding, the state is fully cleared so the next chunk doesn't carry stale data.
+
+**12. Finalization** — when the stream ends (reader returns `done: true` or `"data: [DONE]"` message):
+
+- If `chunksAcumulated` is not empty, `onDone` is called with `{ chunksAcumulated }`
+- In `finally`: `releaseLock()` on the reader and `clearTimeout()` on the inactivity timer
+
+---
+
+## Provider Builders
+
+### DeepSeek
+
+Import from `@felipe-lib/stream-http-event/builders-providers/deepseek`:
+
+- `DeepSeekHeadersBuilder` — headers with apiKey
+- `DeepSeekBodyBuilder` — full request body (model, messages, stream, thinking, tools, etc.)
+- `DeepSeekMessageBuilder` — individual message (role, content, tool_call_id, prefix, reasoning_content)
+- `DeepSeekThinkingBuilder` — thinking configuration (type, reasoning_effort)
+- `DeepSeekResponseFormatBuilder` — response format (text, json_object)
+- `DeepSeekToolBuilder` — tool definition (name, description, parameters, strict)
+- `DeepSeekToolParametersBuilder` — tool parameters (properties, required)
+
+### Anthropic
+
+Import from `@felipe-lib/stream-http-event/builders-providers/anthropic`:
+
+- `AnthropicHeadersBuilder` — headers with apiKey and version
+- `AnthropicBodyBuilder` — request body (model, max_tokens, messages, system, thinking, etc.)
+- `AnthropicMessageBuilder` — individual message (role, content)
+- `AnthropicThinkingBuilder` — thinking configuration (type, budget_tokens)
+
+---
+
+## Public TypeScript Types
 
 ```typescript
-// --- Public types ---
-
 interface dataFetchType<
     H extends Record<string, string> = Record<string, string>,
     B extends Record<string, unknown> = Record<string, unknown>,
@@ -1401,31 +1230,40 @@ interface dataFetchType<
     url: string;
     headers?: H;
     timeOut?: number;
-    extractor?: extractorType[];
     onDone?: (finalData: Record<string, unknown>) => void;
     body?: B;
+    extractors: ExtractorsType;
 }
 
 interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
-    formatSSE?: boolean;
+    prefixKeys?: boolean;
 }
 
-interface extractorType<
-    TData extends object = Record<string, unknown>,
-    TEvent = string,
-> {
-    fn: ({
-        data,
-        event,
-    }: {
-        data: TData;
-        event?: TEvent;
-    }) => Record<string, unknown>;
+interface ExtractorsType {
+    defaultExtract: extract[];
+    conditionalxtractor?: condicionalExtract[];
+}
+
+interface extract {
+    key: string;
+    forExtract: string;
+}
+
+interface condicionalExtract {
+    key: string;
+    path: string;
+    condition: string;
 }
 ```
+
+---
+
+## Student Project
+
+This is a study and learning project. It is functional and in use, but may contain imperfections. Contributions and suggestions are welcome!
 
 ---
 

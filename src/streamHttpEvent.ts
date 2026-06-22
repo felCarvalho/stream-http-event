@@ -4,27 +4,34 @@ import type {
     timeoutType,
     streamIaType,
     FetchOptions,
-    extractorType,
     stateLocalType,
+    ExtractorsType,
 } from "./type.js";
 export class StreamHttpEvent {
     private url: string = "";
     private headers: Record<string, string> = {};
     private timeOut?: number;
-    private extractor?: extractorType[];
     private onDone?: (finalData: Record<string, unknown>) => void;
     private body?: Record<string, unknown>;
+    private extractors?: ExtractorsType;
 
     public dataFetch<
         H extends Record<string, string> = Record<string, string>,
         B extends Record<string, unknown> = Record<string, unknown>,
-    >({ url, headers, body, timeOut, extractor, onDone }: dataFetchType<H, B>) {
+    >({
+        url,
+        headers,
+        body,
+        timeOut,
+        onDone,
+        extractors,
+    }: dataFetchType<H, B>) {
         this.url = url;
         this.headers = headers ?? ({} as Record<string, string>);
         this.timeOut = timeOut;
-        this.extractor = extractor;
         this.onDone = onDone;
         this.body = body;
+        this.extractors = extractors;
     }
 
     private stateLocal() {
@@ -44,6 +51,19 @@ export class StreamHttpEvent {
             clearStateByKey: (key: string) => state.delete(key),
             hasStateByKey: (key: string) => state.has(key),
         };
+    }
+
+    private getValueByPath(obj: Record<string, unknown>, path: string) {
+        const keys = path.split(/[\[\]\.]+/).filter(Boolean);
+        let current: unknown = obj;
+        for (const key of keys) {
+            if (current && typeof current === "object") {
+                current = (current as Record<string, unknown>)[key];
+            } else {
+                return undefined;
+            }
+        }
+        return current;
     }
 
     private bufferControl() {
@@ -96,100 +116,75 @@ export class StreamHttpEvent {
         });
     }
 
-    private parseAndExtracted({
-        line,
+    private GetValueExtract({
+        sseObject,
         state,
-        eventName,
-        extractor,
     }: {
-        line: string;
+        sseObject: Record<string, unknown>;
         state: stateLocalType;
-        extractor: extractorType[];
-        eventName: "data" | "event";
     }) {
-        const clear = line.trim().slice(`${eventName}: `.length);
+        const forExtract = this.extractors?.defaultExtract ?? [];
 
-        if (clear) {
-            try {
-                eventName === "event" &&
-                    state.setState({ event: JSON.parse(clear) });
-
-                eventName === "data" &&
-                    state.setState({ data: JSON.parse(clear) });
-            } catch (e) {
-                throw new Error(
-                    `Falha ao armazenar chunks para extração de informações: ${e}`,
+        if (forExtract.length)
+            for (const extractValue of forExtract) {
+                const value = this.getValueByPath(
+                    sseObject,
+                    extractValue.forExtract,
                 );
+                state.setState({
+                    [extractValue.key]: value,
+                });
             }
 
-            const data = state.getStateOne("data") as Record<string, unknown>;
-            const event = state.getStateOne("event");
+        const forConditional = this.extractors?.conditionalxtractor ?? [];
 
-            if (extractor.length && (data || event)) {
-                for (const extItem of extractor) {
-                    state.setState({ event: JSON.parse(clear) });
-                    state.setState({ data: JSON.parse(clear) });
+        if (forConditional.length)
+            for (const cond of forConditional) {
+                const value = this.getValueByPath(sseObject, cond.path);
+                if (value === cond.condition) {
+                    state.setState({ [cond.key]: value as string });
                 }
             }
-        }
     }
 
-    private serialize({
-        buffer,
-        extractor,
-        state,
-        stateLongDuration,
-    }: serializeType) {
+    private serialize({ buffer, state }: serializeType) {
         const lines = buffer.getBuffer().split("\n\n");
         buffer.setBuffer(lines.pop() ?? "");
 
         for (const message of lines) {
             const trimmedEvent = message.trim().split("\n");
+            let sseObject: Record<string, unknown> = {};
 
-            for (const lineForLine of trimmedEvent) {
-                if (lineForLine === "data: [DONE]") {
-                    return lineForLine;
+            for (const line of trimmedEvent) {
+                if (line === "data: [DONE]") {
+                    return line;
                 }
 
-                if (lineForLine.startsWith("data:")) {
-                    this.parseAndExtracted({
-                        line: lineForLine,
-                        state,
-                        extractor: extractor ?? [],
-                        eventName: "data",
-                    });
-                    const data = state.getStateOne("data") as Record<
-                        string,
-                        unknown
-                    >;
-                    stateLongDuration.setState({ data });
+                if (line.startsWith("data: ")) {
+                    sseObject = {
+                        data: JSON.parse(line.slice("data: ".length)),
+                    };
                 }
 
-                if (lineForLine.startsWith("event:")) {
-                    this.parseAndExtracted({
-                        line: lineForLine,
-                        state,
-                        extractor: extractor ?? [],
-                        eventName: "event",
-                    });
+                if (line.startsWith("event: ")) {
+                    sseObject = {
+                        ...sseObject,
+                        event: line.slice("event: ".length),
+                    };
                 }
+
+                this.GetValueExtract({ sseObject, state });
             }
         }
 
         return false;
     }
 
-    private async *streamIA({
-        body,
-        encodeBytes,
-        extractor,
-        formatSSE,
-    }: streamIaType) {
+    private async *streamIA({ body, encodeBytes, prefixKeys }: streamIaType) {
         const bodyReader = body.getReader();
         const buffer = this.bufferControl();
         const timeOutId = this.timeOutControl();
         const state = this.stateLocal();
-        const stateLongDuration = this.stateLocal();
         const decoder: TextDecoder = new TextDecoder();
         const encoder: TextEncoder = new TextEncoder();
         let chunksAcumulated = "";
@@ -210,10 +205,8 @@ export class StreamHttpEvent {
                 buffer.add(decoder.decode(value, { stream: true }));
 
                 const serialized = this.serialize({
-                    extractor: extractor ?? this.extractor,
                     buffer,
                     state,
-                    stateLongDuration,
                 });
 
                 this.timeout({ timeOutId, bodyReader });
@@ -227,50 +220,58 @@ export class StreamHttpEvent {
                     return;
                 }
 
-                const extractedData =
-                    state.getStateOne("data") ??
-                    "nenhum dado foi extraido de data";
-                const extractedEvent =
-                    state.getStateOne("event") ??
-                    "nenhum dado foi extraido de event";
-                if (!extractedData) continue;
+                const defaultKeys =
+                    this.extractors?.defaultExtract?.map((e) => e.key) ?? [];
+                const conditionalKeys =
+                    this.extractors?.conditionalxtractor?.map((c) => c.key) ??
+                    [];
+
+                const extractorKeys = [...defaultKeys, ...conditionalKeys];
+
+                const extractedValues: Record<string, unknown> = {};
+                let hasValue = false;
+                for (const key of extractorKeys) {
+                    const value = state.getStateOne(key);
+                    if (value !== undefined) {
+                        extractedValues[key] = value;
+                        hasValue = true;
+                    }
+                }
+
+                if (!hasValue) continue;
 
                 let traficChunk = "";
 
-                if (formatSSE) {
-                    if (extractedData)
-                        traficChunk += `data: ${JSON.stringify(extractedData)}\n`;
-
-                    if (extractedEvent)
-                        traficChunk += `event: ${extractedEvent}\n`;
-
-                    if (traficChunk) {
-                        traficChunk += "\n";
-                        chunksAcumulated += traficChunk;
+                if (prefixKeys) {
+                    for (const [key, value] of Object.entries(
+                        extractedValues,
+                    )) {
+                        const strValue =
+                            typeof value === "string"
+                                ? value
+                                : JSON.stringify(value);
+                        traficChunk += `${key}: ${strValue}\n`;
                     }
                 } else {
-                    if (extractedData)
-                        traficChunk += `${JSON.stringify(extractedData)}\n`;
-
-                    if (extractedEvent) traficChunk += `${extractedEvent}\n`;
-
-                    if (traficChunk) {
-                        traficChunk += "\n";
-                        chunksAcumulated += traficChunk;
+                    for (const [, value] of Object.entries(extractedValues)) {
+                        const strValue =
+                            typeof value === "string"
+                                ? value
+                                : JSON.stringify(value);
+                        traficChunk += `${strValue}\n`;
                     }
                 }
 
                 if (traficChunk) {
+                    traficChunk += "\n";
+                    chunksAcumulated += traficChunk;
                     yield encodeBytes
                         ? encoder.encode(traficChunk)
                         : traficChunk;
                 }
 
-                state.clearStateByKey("data");
-                state.clearStateByKey("event");
+                state.clearState();
             }
-        } catch (e: unknown) {
-            throw e;
         } finally {
             timeOutId.clearTime();
             bodyReader.releaseLock();
@@ -281,7 +282,7 @@ export class StreamHttpEvent {
         encodeBytes,
         signal,
         method,
-        formatSSE = true,
+        prefixKeys = true,
     }: FetchOptions) {
         if (!this.url) {
             throw new Error("dataFetch() precisa da url do seu provedor de IA");
@@ -307,25 +308,15 @@ export class StreamHttpEvent {
         if (contentType?.includes("text/event-stream")) {
             return this.streamIA({
                 body: fetcher.body,
-                formatSSE,
+                prefixKeys,
                 encodeBytes,
-                extractor: this.extractor ?? [],
             }) as AsyncGenerator<
                 string | Uint8Array<ArrayBuffer>,
                 void,
                 unknown
             >;
         } else {
-            const extractors = this.extractor;
-            let data = await fetcher.json();
-
-            if (extractors) {
-                for (const extItem of extractors) {
-                    data = extItem.fn({ data });
-                }
-            }
-
-            return data as Promise<Record<string, unknown>>;
+            return fetcher.json();
         }
     }
 }

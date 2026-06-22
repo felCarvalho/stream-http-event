@@ -247,7 +247,7 @@ export interface WebFetchBlockParam {
     retrieved_at?: string | null;
 }
 export interface WebFetchToolResultBlockParam {
-    ccontent: WebFetchToolResultErrorBlockParam | WebFetchBlockParam;
+    content: WebFetchToolResultErrorBlockParam | WebFetchBlockParam;
     tool_use_id: string;
     type: "web_fetch_tool_result";
     cache_control?: CacheControlEphemeral | null;
@@ -287,7 +287,6 @@ export interface EncryptedCodeExecutionResultBlockParam {
 }
 
 export type CodeExecutionToolResultBlockParamContent =
-    | CodeExecutionToolResultErrorParam
     | CodeExecutionToolResultErrorParam
     | EncryptedCodeExecutionResultBlockParam;
 

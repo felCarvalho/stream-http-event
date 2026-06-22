@@ -19,14 +19,20 @@ export interface stateLocalType {
     hasStateByKey: (key: string) => boolean;
 }
 
-export interface extractorType<TData extends object = Record<string, unknown>, TEvent = string> {
-    fn: ({
-        data,
-        event,
-    }: {
-        data: TData;
-        event?: TEvent;
-    }) => Record<string, unknown>;
+export interface condicionalExtract {
+    key: string;
+    path: string;
+    condition: string;
+}
+
+export interface extract {
+    key: string;
+    forExtract: string;
+}
+
+export interface ExtractorsType {
+    defaultExtract: extract[];
+    conditionalxtractor?: condicionalExtract[];
 }
 
 export interface dataFetchType<
@@ -36,16 +42,14 @@ export interface dataFetchType<
     url: string;
     headers?: H;
     timeOut?: number;
-    extractor?: extractorType[];
     onDone?: (finalData: Record<string, unknown>) => void;
     body?: B;
+    extractors: ExtractorsType;
 }
 
 export interface serializeType {
     buffer: bufferControlType;
-    extractor?: extractorType[];
     state: stateLocalType;
-    stateLongDuration: stateLocalType;
 }
 
 export interface timeoutType {
@@ -56,13 +60,12 @@ export interface timeoutType {
 export interface streamIaType {
     body: ReadableStream<Uint8Array>;
     encodeBytes: boolean | undefined;
-    extractor?: extractorType[];
-    formatSSE?: boolean;
+    prefixKeys?: boolean;
 }
 
 export interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
-    formatSSE?: boolean;
+    prefixKeys?: boolean;
 }
