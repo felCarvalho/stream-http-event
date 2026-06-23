@@ -1,6 +1,6 @@
 # @felipe-lib/stream-http-event
 
-[![npm version](https://img.shields.io/badge/npm-v2.1.25-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
+[![npm version](https://img.shields.io/badge/npm-v2.1.30-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
 [![license](https://img.shields.io/badge/license-ISC-green)](./LICENSE)
 
 **Zero dependências em runtime.** Consuma respostas HTTP em streaming de provedores de IA (OpenAI, Anthropic, Groq, DeepSeek, etc.) via o protocolo [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
