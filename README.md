@@ -140,14 +140,14 @@ Configura a instância. Deve ser chamado antes de `fetchIA()`.
 stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 ```
 
-| Parâmetro    | Tipo                                           | Obrigatório | Descrição                                                                 |
-| ------------ | ---------------------------------------------- | ----------- | ------------------------------------------------------------------------- |
-| `url`        | `string`                                       | Sim         | Endpoint do provedor de IA                                                |
-| `headers`    | `Record<string, string>`                       | Não         | Headers HTTP. Pode ser tipado via builder de provedor                     |
-| `body`       | `Record<string, unknown>`                      | Não         | Corpo da requisição (serializado como JSON)                               |
-| `timeOut`    | `number`                                       | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk              |
+| Parâmetro    | Tipo                                           | Obrigatório | Descrição                                                                                                  |
+| ------------ | ---------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
+| `url`        | `string`                                       | Sim         | Endpoint do provedor de IA                                                                                 |
+| `headers`    | `Record<string, string>`                       | Não         | Headers HTTP. Pode ser tipado via builder de provedor                                                      |
+| `body`       | `Record<string, unknown>`                      | Não         | Corpo da requisição (serializado como JSON)                                                                |
+| `timeOut`    | `number`                                       | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk                                               |
 | `onDone`     | `(finalData: Record<string, unknown>) => void` | Não         | Callback disparado quando o stream termina. Recebe `{ chunks }` — array de objetos extraídos chunk a chunk |
-| `extractors` | `ExtractorsType`                               | Sim         | Configuração dos extratores de dados                                      |
+| `extractors` | `ExtractorsType`                               | Sim         | Configuração dos extratores de dados                                                                       |
 
 ---
 
@@ -628,6 +628,16 @@ interface condicionalExtract {
 
 ---
 
+## Filosofia
+
+Esta biblioteca tem um propósito único e focado: **consumir streams HTTP/SSE** de provedores de IA com zero dependências. Não pretende ser um SDK completo — embedding, contagem de tokens, cache, rate limit, etc. são responsabilidades de outras camadas.
+
+A arquitetura é deliberadamente enxuta para que você possa estender sem lutar contra o design. Use os dados crus do `for await` ou o array de objetos do `onDone` para construir o que precisar por cima — sem que a lib atrapalhe.
+
+Features, correções e extensões feitas por outros devs são **bem-vindas**. O projeto aceita contributions via PRs e issues, desde que mantenham o escopo focado e não adicionem dependências desnecessárias.
+
+---
+
 ## Projeto Estudantil
 
 Este é um projeto de estudo e aprendizado. Está funcional e em uso, mas pode conter imperfeições. Contribuições e sugestões são bem-vindas!
@@ -765,14 +775,14 @@ Configures the instance. Must be called before `fetchIA()`.
 stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 ```
 
-| Parameter    | Type                                           | Required | Description                                                          |
-| ------------ | ---------------------------------------------- | -------- | -------------------------------------------------------------------- |
-| `url`        | `string`                                       | Yes      | AI provider endpoint                                                 |
-| `headers`    | `Record<string, string>`                       | No       | HTTP headers. Can be typed via provider builder                      |
-| `body`       | `Record<string, unknown>`                      | No       | Request body (serialized as JSON)                                    |
-| `timeOut`    | `number`                                       | No       | Inactivity timeout in milliseconds. Resets on each chunk             |
+| Parameter    | Type                                           | Required | Description                                                                                       |
+| ------------ | ---------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------- |
+| `url`        | `string`                                       | Yes      | AI provider endpoint                                                                              |
+| `headers`    | `Record<string, string>`                       | No       | HTTP headers. Can be typed via provider builder                                                   |
+| `body`       | `Record<string, unknown>`                      | No       | Request body (serialized as JSON)                                                                 |
+| `timeOut`    | `number`                                       | No       | Inactivity timeout in milliseconds. Resets on each chunk                                          |
 | `onDone`     | `(finalData: Record<string, unknown>) => void` | No       | Callback fired when the stream ends. Receives `{ chunks }` — array of extracted objects per chunk |
-| `extractors` | `ExtractorsType`                               | Yes      | Extractor configuration                                              |
+| `extractors` | `ExtractorsType`                               | Yes      | Extractor configuration                                                                           |
 
 ---
 
@@ -1250,6 +1260,16 @@ interface condicionalExtract {
     condition: string;
 }
 ```
+
+---
+
+## Philosophy
+
+This library has a single, focused purpose: **consuming HTTP/SSE streams** from AI providers with zero dependencies. It does not aim to be a full SDK — embedding, token counting, caching, rate limiting, etc. are responsibilities of other layers.
+
+The architecture is deliberately lean so you can extend it without fighting the design. Use the raw data from `for await` or the object array from `onDone` to build whatever you need on top — without the library getting in the way.
+
+Features, fixes, and extensions made by other devs are **welcome**. The project accepts contributions via PRs and issues, as long as they keep the scope focused and don't add unnecessary dependencies.
 
 ---
 
