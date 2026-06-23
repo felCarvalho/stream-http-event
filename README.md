@@ -1,6 +1,6 @@
 # @felipe-lib/stream-http-event
 
-[![npm version](https://img.shields.io/badge/npm-v2.1.30-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
+[![npm version](https://img.shields.io/badge/npm-v2.1.35-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
 [![license](https://img.shields.io/badge/license-ISC-green)](./LICENSE)
 
 **Zero dependências em runtime.** Consuma respostas HTTP em streaming de provedores de IA (OpenAI, Anthropic, Groq, DeepSeek, etc.) via o protocolo [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
@@ -108,8 +108,8 @@ A API antiga usava funções JavaScript para extrair dados. A nova usa **paths**
 
 ### Formato de saída
 
-| Antes                                                     | Depois                                               |
-| --------------------------------------------------------- | ---------------------------------------------------- |
+| Antes                                                     | Depois                                                                    |
+| --------------------------------------------------------- | ------------------------------------------------------------------------- |
 | Sempre `data: {...}\nevent: ...\n\n` (formato SSE padrão) | Sempre `data: { "chave": "valor" }\n\n` (JSON do objeto extraído inteiro) |
 
 ### Código removido
@@ -135,15 +135,15 @@ Configura a instância. Deve ser chamado antes de `fetchIA()`.
 stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 ```
 
-| Parâmetro    | Tipo                                           | Obrigatório | Descrição                                                                                                  |
-| ------------ | ---------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
-| `url`        | `string`                                       | Sim         | Endpoint do provedor de IA                                                                                 |
-| `headers`    | `Record<string, string>`                       | Não         | Headers HTTP. Pode ser tipado via builder de provedor                                                      |
-| `body`       | `Record<string, unknown>`                      | Não         | Corpo da requisição (serializado como JSON)                                                                |
-| `timeOut`    | `number`                                       | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk                                               |
-| `onDone`     | `(finalData: Record<string, unknown>) => void` | Não         | Callback disparado quando o stream termina. Recebe `{ chunks }` — array de objetos extraídos chunk a chunk |
+| Parâmetro       | Tipo                                           | Obrigatório | Descrição                                                                                                  |
+| --------------- | ---------------------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------- |
+| `url`           | `string`                                       | Sim         | Endpoint do provedor de IA                                                                                 |
+| `headers`       | `Record<string, string>`                       | Não         | Headers HTTP. Pode ser tipado via builder de provedor                                                      |
+| `body`          | `Record<string, unknown>`                      | Não         | Corpo da requisição (serializado como JSON)                                                                |
+| `timeOut`       | `number`                                       | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk                                               |
+| `onDone`        | `(finalData: Record<string, unknown>) => void` | Não         | Callback disparado quando o stream termina. Recebe `{ chunks }` — array de objetos extraídos chunk a chunk |
 | `extractors`    | `ExtractorsType`                               | Sim         | Configuração dos extratores de dados                                                                       |
-| `beforeRequest` | `BeforeRequestFn`                              | Não         | Função assíncrona executada antes do fetch. Recebe `{ url, headers, body }` e pode modificar cada campo     |
+| `beforeRequest` | `BeforeRequestFn`                              | Não         | Função assíncrona executada antes do fetch. Recebe `{ url, headers, body }` e pode modificar cada campo    |
 
 ---
 
@@ -191,11 +191,11 @@ Executa a requisição HTTP e retorna um `AsyncGenerator` ou um objeto JSON pars
 stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, unknown>>
 ```
 
-| Parâmetro     | Tipo          | Padrão   | Descrição                                                              |
-| ------------- | ------------- | -------- | ---------------------------------------------------------------------- |
-| `method`      | `string`      | `"POST"` | Método HTTP                                                            |
-| `signal`      | `AbortSignal` | —        | Sinal do AbortController para cancelamento                             |
-| `encodeBytes` | `boolean`     | `false`  | Se `true`, chunks yieldados são `Uint8Array`. Se `false`, são strings  |
+| Parâmetro     | Tipo          | Padrão   | Descrição                                                             |
+| ------------- | ------------- | -------- | --------------------------------------------------------------------- |
+| `method`      | `string`      | `"POST"` | Método HTTP                                                           |
+| `signal`      | `AbortSignal` | —        | Sinal do AbortController para cancelamento                            |
+| `encodeBytes` | `boolean`     | `false`  | Se `true`, chunks yieldados são `Uint8Array`. Se `false`, são strings |
 
 **Retorna:**
 
@@ -529,7 +529,7 @@ Content-Type: text/event-stream?
 - Busca cada valor no state via `getStateOne()`
 - Se nenhuma key tiver valor (`hasValue === false`), o chunk é pulado (`continue`)
 - Serializa o objeto `extractedValues` com `JSON.stringify` e adiciona `\n\n`
-- Monta a saída no formato SSE: ``data: ${JSON.stringify(extractedValues)}\n\n``
+- Monta a saída no formato SSE: `data: ${JSON.stringify(extractedValues)}\n\n`
 - Faz yield da string (ou `Uint8Array` se `encodeBytes: true`)
 - O objeto extraído é acumulado via `push` em `chunks` (array de objetos) para uso no `onDone`
 
@@ -722,8 +722,8 @@ The old API used JavaScript functions to extract data. The new one uses **path s
 
 ### Output format
 
-| Before                                                     | After                                                     |
-| ---------------------------------------------------------- | --------------------------------------------------------- |
+| Before                                                     | After                                                                      |
+| ---------------------------------------------------------- | -------------------------------------------------------------------------- |
 | Always `data: {...}\nevent: ...\n\n` (standard SSE format) | Always `data: { "key": "value" }\n\n` (JSON of the whole extracted object) |
 
 ### Removed code
@@ -749,13 +749,13 @@ Configures the instance. Must be called before `fetchIA()`.
 stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 ```
 
-| Parameter    | Type                                           | Required | Description                                                                                       |
-| ------------ | ---------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------- |
-| `url`        | `string`                                       | Yes      | AI provider endpoint                                                                              |
-| `headers`    | `Record<string, string>`                       | No       | HTTP headers. Can be typed via provider builder                                                   |
-| `body`       | `Record<string, unknown>`                      | No       | Request body (serialized as JSON)                                                                 |
-| `timeOut`    | `number`                                       | No       | Inactivity timeout in milliseconds. Resets on each chunk                                          |
-| `onDone`     | `(finalData: Record<string, unknown>) => void` | No       | Callback fired when the stream ends. Receives `{ chunks }` — array of extracted objects per chunk |
+| Parameter       | Type                                           | Required | Description                                                                                       |
+| --------------- | ---------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------- |
+| `url`           | `string`                                       | Yes      | AI provider endpoint                                                                              |
+| `headers`       | `Record<string, string>`                       | No       | HTTP headers. Can be typed via provider builder                                                   |
+| `body`          | `Record<string, unknown>`                      | No       | Request body (serialized as JSON)                                                                 |
+| `timeOut`       | `number`                                       | No       | Inactivity timeout in milliseconds. Resets on each chunk                                          |
+| `onDone`        | `(finalData: Record<string, unknown>) => void` | No       | Callback fired when the stream ends. Receives `{ chunks }` — array of extracted objects per chunk |
 | `extractors`    | `ExtractorsType`                               | Yes      | Extractor configuration                                                                           |
 | `beforeRequest` | `BeforeRequestFn`                              | No       | Async function executed before fetch. Receives `{ url, headers, body }` and can modify each field |
 
@@ -1143,7 +1143,7 @@ Content-Type: text/event-stream?
 - Looks up each value in state via `getStateOne()`
 - If no key has a value (`hasValue === false`), the chunk is skipped (`continue`)
 - Serializes the `extractedValues` object with `JSON.stringify` and appends `\n\n`
-- Builds the SSE output: ``data: ${JSON.stringify(extractedValues)}\n\n``
+- Builds the SSE output: `data: ${JSON.stringify(extractedValues)}\n\n`
 - Yields the string (or `Uint8Array` if `encodeBytes: true`)
 - The extracted object is pushed into `chunks` array (object accumulation) for use in `onDone`
 
