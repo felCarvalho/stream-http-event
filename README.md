@@ -1,6 +1,6 @@
 # @felipe-lib/stream-http-event
 
-[![npm version](https://img.shields.io/badge/npm-v2.0.1-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
+[![npm version](https://img.shields.io/badge/npm-v2.0.2-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
 [![license](https://img.shields.io/badge/license-ISC-green)](./LICENSE)
 
 **Zero dependências em runtime.** Consuma respostas HTTP em streaming de provedores de IA (OpenAI, Anthropic, Groq, DeepSeek, etc.) via o protocolo [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
@@ -146,7 +146,7 @@ stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 | `headers`    | `Record<string, string>`                       | Não         | Headers HTTP. Pode ser tipado via builder de provedor                     |
 | `body`       | `Record<string, unknown>`                      | Não         | Corpo da requisição (serializado como JSON)                               |
 | `timeOut`    | `number`                                       | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk              |
-| `onDone`     | `(finalData: Record<string, unknown>) => void` | Não         | Callback disparado quando o stream termina. Recebe `{ chunksAcumulated }` |
+| `onDone`     | `(finalData: Record<string, unknown>) => void` | Não         | Callback disparado quando o stream termina. Recebe `{ chunks }` — array de objetos extraídos chunk a chunk |
 | `extractors` | `ExtractorsType`                               | Sim         | Configuração dos extratores de dados                                      |
 
 ---
@@ -361,7 +361,8 @@ for await (const chunk of generator) {
 stream.dataFetch({
     // ... config ...
     onDone: (finalData) => {
-        console.log("Resposta completa:", finalData.chunksAcumulated);
+        console.log("Resposta completa:", finalData.chunks);
+        // finalData.chunks → [{ content: "Olá" }, { content: " mundo" }, { content: "!" }]
         // Salve em banco de dados, arquivo, etc.
     },
 });
@@ -486,7 +487,7 @@ Content-Type: text/event-stream?
     |        [loop repete até done ou "data: [DONE]"]
     |               |
     |               ↓
-    |        onDone({ chunksAcumulated }) — stream finalizado
+    |        onDone({ chunks }) — stream finalizado (array de objetos extraídos)
     |               |
     |               ↓
     |        finally: releaseLock() + clearTimeout()
@@ -548,14 +549,15 @@ Content-Type: text/event-stream?
 - Monta a string de saída:
     - `prefixKeys: true` → `key: valor\n` (ex: `content: "Olá"\n`)
     - `prefixKeys: false` → `valor\n` (ex: `"Olá"\n`)
-- Adiciona `\n` ao final, acumula em `chunksAcumulated`, e faz yield
+- Adiciona `\n` ao final e faz yield
+- O objeto extraído é acumulado via `push` em `chunks` (array de objetos) para uso no `onDone`
 - Valores string são usados diretamente; objetos/arrays/números são serializados com `JSON.stringify`
 
 **11. `clearState()`** — após yield, o state é completamente limpo para o próximo chunk não acumular dados obsoletos.
 
 **12. Finalização** — quando o stream termina (reader retorna `done: true` ou mensagem `"data: [DONE]"`):
 
-- Se `chunksAcumulated` não estiver vazio, `onDone` é chamado com `{ chunksAcumulated }`
+- Se `chunks` (array) não estiver vazio, `onDone` é chamado com `{ chunks }` — cada elemento é um objeto com as keys extraídas
 - No `finally`: `releaseLock()` no reader e `clearTimeout()` no timer de inatividade
 
 ---
@@ -769,7 +771,7 @@ stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 | `headers`    | `Record<string, string>`                       | No       | HTTP headers. Can be typed via provider builder                      |
 | `body`       | `Record<string, unknown>`                      | No       | Request body (serialized as JSON)                                    |
 | `timeOut`    | `number`                                       | No       | Inactivity timeout in milliseconds. Resets on each chunk             |
-| `onDone`     | `(finalData: Record<string, unknown>) => void` | No       | Callback fired when the stream ends. Receives `{ chunksAcumulated }` |
+| `onDone`     | `(finalData: Record<string, unknown>) => void` | No       | Callback fired when the stream ends. Receives `{ chunks }` — array of extracted objects per chunk |
 | `extractors` | `ExtractorsType`                               | Yes      | Extractor configuration                                              |
 
 ---
@@ -984,7 +986,8 @@ for await (const chunk of generator) {
 stream.dataFetch({
     // ... config ...
     onDone: (finalData) => {
-        console.log("Full response:", finalData.chunksAcumulated);
+        console.log("Full response:", finalData.chunks);
+        // finalData.chunks → [{ content: "Hello" }, { content: " world" }, { content: "!" }]
         // Save to database, file, etc.
     },
 });
@@ -1109,7 +1112,7 @@ Content-Type: text/event-stream?
     |        [loop repeats until done or "data: [DONE]"]
     |               |
     |               ↓
-    |        onDone({ chunksAcumulated }) — stream finished
+    |        onDone({ chunks }) — stream finished (array of extracted objects)
     |               |
     |               ↓
     |        finally: releaseLock() + clearTimeout()
@@ -1171,14 +1174,15 @@ Content-Type: text/event-stream?
 - Builds the output string:
     - `prefixKeys: true` → `key: value\n` (e.g. `content: "Hello"\n`)
     - `prefixKeys: false` → `value\n` (e.g. `"Hello"\n`)
-- Adds `\n` at the end, accumulates into `chunksAcumulated`, and yields
+- Adds `\n` at the end and yields
+- The extracted object is pushed into `chunks` array (object accumulation) for use in `onDone`
 - String values are used directly; objects/arrays/numbers are serialized with `JSON.stringify`
 
 **11. `clearState()`** — after yielding, the state is fully cleared so the next chunk doesn't carry stale data.
 
 **12. Finalization** — when the stream ends (reader returns `done: true` or `"data: [DONE]"` message):
 
-- If `chunksAcumulated` is not empty, `onDone` is called with `{ chunksAcumulated }`
+- If `chunks` (array) is not empty, `onDone` is called with `{ chunks }` — each element is an object with the extracted keys
 - In `finally`: `releaseLock()` on the reader and `clearTimeout()` on the inactivity timer
 
 ---
