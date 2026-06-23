@@ -11,7 +11,7 @@ export class StreamHttpEvent {
     private url: string = "";
     private headers: Record<string, string> = {};
     private timeOut?: number;
-    private onDone?: (finalData: Record<string, unknown>) => void;
+    private onDone?: (finalData: { chunks: Record<string, unknown>[] }) => void;
     private body?: Record<string, unknown>;
     private extractors?: ExtractorsType;
 
@@ -187,16 +187,16 @@ export class StreamHttpEvent {
         const state = this.stateLocal();
         const decoder: TextDecoder = new TextDecoder();
         const encoder: TextEncoder = new TextEncoder();
-        let chunksAcumulated = "";
+        let chunksAcumulated: Record<string, unknown>[] = [];
 
         try {
             while (true) {
                 const { done, value } = await bodyReader.read();
 
                 if (done) {
-                    if (chunksAcumulated) {
+                    if (chunksAcumulated.length) {
                         this.onDone
-                            ? this.onDone({ chunksAcumulated })
+                            ? this.onDone({ chunks: chunksAcumulated })
                             : (this.onDone = undefined);
                     }
                     break;
@@ -212,9 +212,9 @@ export class StreamHttpEvent {
                 this.timeout({ timeOutId, bodyReader });
 
                 if (serialized === "data: [DONE]") {
-                    if (chunksAcumulated) {
+                    if (chunksAcumulated.length) {
                         this.onDone
-                            ? this.onDone({ chunksAcumulated })
+                            ? this.onDone({ chunks: chunksAcumulated })
                             : (this.onDone = undefined);
                     }
                     return;
@@ -240,6 +240,8 @@ export class StreamHttpEvent {
 
                 if (!hasValue) continue;
 
+                chunksAcumulated.push(extractedValues);
+
                 let traficChunk = "";
 
                 if (prefixKeys) {
@@ -264,7 +266,6 @@ export class StreamHttpEvent {
 
                 if (traficChunk) {
                     traficChunk += "\n";
-                    chunksAcumulated += traficChunk;
                     yield encodeBytes
                         ? encoder.encode(traficChunk)
                         : traficChunk;
