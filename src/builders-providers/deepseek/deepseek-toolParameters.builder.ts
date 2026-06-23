@@ -1,23 +1,24 @@
-import type { DeepSeekToolParameters } from "../../types-providers/types.deepseek.js";
+export interface DeepSeekToolParam {
+    type: "object";
+    properties: Record<string, unknown>;
+    required: string[];
+}
 
 export class DeepSeekToolParametersBuilder {
-    private propertiesValue: DeepSeekToolParameters["properties"] = {};
-    private requiredValue: DeepSeekToolParameters["required"] = [];
+    private propertiesValue: Record<string, unknown> = {};
+    private requiredValue: string[] = [];
 
-    property(
-        name: string,
-        schema: DeepSeekToolParameters["properties"][string],
-    ): this {
+    property(name: string, schema: unknown): this {
         this.propertiesValue[name] = schema;
         return this;
     }
 
-    required(...names: DeepSeekToolParameters["required"]): this {
+    required(...names: string[]): this {
         this.requiredValue.push(...names);
         return this;
     }
 
-    build(): DeepSeekToolParameters {
+    build(): DeepSeekToolParam {
         return {
             type: "object",
             properties: this.propertiesValue,

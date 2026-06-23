@@ -1,14 +1,16 @@
-import type { DeepSeekResponseFormat } from "../../types-providers/types.deepseek.js";
+export interface DeepSeekResponseFmt {
+    type: "text" | "json_object";
+}
 
 export class DeepSeekResponseFormatBuilder {
-    private typeValue: DeepSeekResponseFormat["type"] = "text";
+    private typeValue: "text" | "json_object" = "text";
 
-    type(type: DeepSeekResponseFormat["type"]): this {
+    type(type: "text" | "json_object"): this {
         this.typeValue = type;
         return this;
     }
 
-    build(): DeepSeekResponseFormat {
+    build(): DeepSeekResponseFmt {
         return { type: this.typeValue };
     }
 }

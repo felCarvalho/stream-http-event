@@ -1,6 +1,6 @@
 # @felipe-lib/stream-http-event
 
-[![npm version](https://img.shields.io/badge/npm-v2.1.35-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
+[![npm version](https://img.shields.io/badge/npm-v2.1.51-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
 [![license](https://img.shields.io/badge/license-ISC-green)](./LICENSE)
 
 **Zero dependências em runtime.** Consuma respostas HTTP em streaming de provedores de IA (OpenAI, Anthropic, Groq, DeepSeek, etc.) via o protocolo [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
@@ -556,6 +556,8 @@ Importe de `@felipe-lib/stream-http-event/builders-providers/deepseek`:
 - `DeepSeekToolBuilder` — definição de ferramenta (name, description, parameters, strict)
 - `DeepSeekToolParametersBuilder` — parâmetros da ferramenta (properties, required)
 
+> Cada builder DeepSeek exporta sua própria interface de retorno: `DeepSeekBody`, `DeepSeekMessageBuild`, `DeepSeekThink`, `DeepSeekResponseFmt`, `DeepSeekToolParam`, `DeepSeekToolBuild`.
+
 ### Anthropic
 
 Importe de `@felipe-lib/stream-http-event/builders-providers/anthropic`:
@@ -564,6 +566,8 @@ Importe de `@felipe-lib/stream-http-event/builders-providers/anthropic`:
 - `AnthropicBodyBuilder` — corpo da requisição (model, max_tokens, messages, system, thinking, etc.)
 - `AnthropicMessageBuilder` — mensagem individual (role, content)
 - `AnthropicThinkingBuilder` — configuração de thinking (type, budget_tokens)
+
+> Cada builder Anthropic exporta sua própria interface de retorno: `AnthropicBody`, `AnthropicMessage`, `AnthropicThinking`.
 
 ---
 
@@ -603,6 +607,22 @@ interface condicionalExtract {
     path: string;
     condition: string;
 }
+```
+
+---
+
+Além disso, cada builder de provedor exporta sua interface de retorno:
+
+**Anthropic:**
+```typescript
+import type { AnthropicBody, AnthropicMessage, AnthropicThinking }
+    from "@felipe-lib/stream-http-event/builders-providers/anthropic";
+```
+
+**DeepSeek:**
+```typescript
+import type { DeepSeekBody, DeepSeekMessageBuild, DeepSeekThink, DeepSeekResponseFmt, DeepSeekToolParam, DeepSeekToolBuild }
+    from "@felipe-lib/stream-http-event/builders-providers/deepseek";
 ```
 
 ---
@@ -1170,6 +1190,8 @@ Import from `@felipe-lib/stream-http-event/builders-providers/deepseek`:
 - `DeepSeekToolBuilder` — tool definition (name, description, parameters, strict)
 - `DeepSeekToolParametersBuilder` — tool parameters (properties, required)
 
+> Each DeepSeek builder exports its own return interface: `DeepSeekBody`, `DeepSeekMessageBuild`, `DeepSeekThink`, `DeepSeekResponseFmt`, `DeepSeekToolParam`, `DeepSeekToolBuild`.
+
 ### Anthropic
 
 Import from `@felipe-lib/stream-http-event/builders-providers/anthropic`:
@@ -1178,6 +1200,8 @@ Import from `@felipe-lib/stream-http-event/builders-providers/anthropic`:
 - `AnthropicBodyBuilder` — request body (model, max_tokens, messages, system, thinking, etc.)
 - `AnthropicMessageBuilder` — individual message (role, content)
 - `AnthropicThinkingBuilder` — thinking configuration (type, budget_tokens)
+
+> Each Anthropic builder exports its own return interface: `AnthropicBody`, `AnthropicMessage`, `AnthropicThinking`.
 
 ---
 
@@ -1217,6 +1241,22 @@ interface condicionalExtract {
     path: string;
     condition: string;
 }
+```
+
+---
+
+Additionally, each provider builder exports its own return interface:
+
+**Anthropic:**
+```typescript
+import type { AnthropicBody, AnthropicMessage, AnthropicThinking }
+    from "@felipe-lib/stream-http-event/builders-providers/anthropic";
+```
+
+**DeepSeek:**
+```typescript
+import type { DeepSeekBody, DeepSeekMessageBuild, DeepSeekThink, DeepSeekResponseFmt, DeepSeekToolParam, DeepSeekToolBuild }
+    from "@felipe-lib/stream-http-event/builders-providers/deepseek";
 ```
 
 ---

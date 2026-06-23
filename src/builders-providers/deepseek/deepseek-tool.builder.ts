@@ -1,38 +1,43 @@
-import type {
-    DeepSeekTool,
-    DeepSeekToolParameters,
-} from "../../types-providers/types.deepseek.js";
+import type { DeepSeekToolParameters } from "../../types-providers/types.deepseek.js";
+
+export interface DeepSeekToolBuild {
+    type: "function";
+    function: {
+        name: string;
+        description: string;
+        parameters?: DeepSeekToolParameters;
+    };
+    strict: boolean;
+}
 
 export class DeepSeekToolBuilder {
-    private nameValue: DeepSeekTool["function"]["name"] = "";
-    private descriptionValue: DeepSeekTool["function"]["description"] = "";
+    private nameValue: string = "";
+    private descriptionValue: string = "";
     private parametersValue?: DeepSeekToolParameters;
-    private strictValue: DeepSeekTool["strict"] = false;
+    private strictValue: boolean = false;
 
-    name(name: DeepSeekTool["function"]["name"]): this {
+    name(name: string): this {
         this.nameValue = name;
         return this;
     }
 
-    description(description: DeepSeekTool["function"]["description"]): this {
+    description(description: string): this {
         this.descriptionValue = description;
         return this;
     }
 
-    parameters(
-        parameters: NonNullable<DeepSeekTool["function"]["parameters"]>,
-    ): this {
+    parameters(parameters: DeepSeekToolParameters): this {
         this.parametersValue = parameters;
         return this;
     }
 
-    strict(strict: DeepSeekTool["strict"]): this {
+    strict(strict: boolean): this {
         this.strictValue = strict;
         return this;
     }
 
-    build(): DeepSeekTool {
-        const tool: DeepSeekTool = {
+    build(): DeepSeekToolBuild {
+        const tool: DeepSeekToolBuild = {
             type: "function",
             function: {
                 name: this.nameValue,

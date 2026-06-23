@@ -1,47 +1,52 @@
-import type { DeepSeekMessage } from "../../types-providers/types.deepseek.js";
+export interface DeepSeekMessageBuild {
+    content: string;
+    role: "system" | "user" | "assistant" | "tool";
+    name?: string;
+    tool_call_id?: string;
+    prefix?: boolean;
+    reasoning_content?: string | null;
+}
 
 export class DeepSeekMessageBuilder {
-    private roleValue: DeepSeekMessage["role"] = "user";
-    private contentValue: DeepSeekMessage["content"] = "";
+    private roleValue: "system" | "user" | "assistant" | "tool" = "user";
+    private contentValue: string = "";
     private nameValue?: string;
     private toolCallIdValue?: string;
     private prefixValue?: boolean;
     private reasoningContentValue?: string | null;
 
-    role(role: DeepSeekMessage["role"]): this {
+    role(role: "system" | "user" | "assistant" | "tool"): this {
         this.roleValue = role;
         return this;
     }
 
-    content(content: DeepSeekMessage["content"]): this {
+    content(content: string): this {
         this.contentValue = content;
         return this;
     }
 
-    name(name: NonNullable<DeepSeekMessage["name"]>): this {
+    name(name: string): this {
         this.nameValue = name;
         return this;
     }
 
-    toolCallId(id: NonNullable<DeepSeekMessage["tool_call_id"]>): this {
+    toolCallId(id: string): this {
         this.toolCallIdValue = id;
         return this;
     }
 
-    prefix(prefix: NonNullable<DeepSeekMessage["prefix"]>): this {
+    prefix(prefix: boolean): this {
         this.prefixValue = prefix;
         return this;
     }
 
-    reasoningContent(
-        reasoningContent: NonNullable<DeepSeekMessage["reasoning_content"]>,
-    ): this {
+    reasoningContent(reasoningContent: string): this {
         this.reasoningContentValue = reasoningContent;
         return this;
     }
 
-    build(): DeepSeekMessage {
-        const msg: DeepSeekMessage = {
+    build(): DeepSeekMessageBuild {
+        const msg: DeepSeekMessageBuild = {
             role: this.roleValue,
             content: this.contentValue,
         };

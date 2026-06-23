@@ -1,16 +1,34 @@
 import type {
-    MessageCreateParamsBase,
+    Messages,
+    Modelo,
     CacheControlEphemeral,
     FormatResponse,
     ThinkingConfigParam,
     TextBlockParam,
 } from "../../types-providers/types.anthropic.js";
 
+export interface AnthropicBody {
+    max_tokens: number;
+    messages: Messages[];
+    model: Modelo;
+    system?: string | TextBlockParam[];
+    thinking?: ThinkingConfigParam;
+    cache_control?: CacheControlEphemeral | null;
+    container?: string | null;
+    inference_geo?: string | null;
+    metadata?: {
+        user_id?: string | null;
+    };
+    output_config?: FormatResponse;
+    service_tier?: "auto" | "standard_only";
+    stop_sequences?: string[];
+    stream?: boolean;
+}
+
 export class AnthropicBodyBuilder {
-    private messagesValue: MessageCreateParamsBase["messages"] = [];
-    private modelValue: MessageCreateParamsBase["model"] =
-        "claude-sonnet-4-20250514";
-    private maxTokensValue: MessageCreateParamsBase["max_tokens"] = 1024;
+    private messagesValue: Messages[] = [];
+    private modelValue: Modelo = "claude-sonnet-4-20250514";
+    private maxTokensValue: number = 1024;
     private systemValue?: string | TextBlockParam[];
     private thinkingValue?: ThinkingConfigParam;
     private cacheControlValue?: CacheControlEphemeral | null;
@@ -22,89 +40,73 @@ export class AnthropicBodyBuilder {
     private stopSequencesValue?: string[];
     private streamValue?: boolean;
 
-    messages(messages: MessageCreateParamsBase["messages"]): this {
+    messages(messages: Messages[]): this {
         this.messagesValue = messages;
         return this;
     }
 
-    model(model: MessageCreateParamsBase["model"]): this {
+    model(model: Modelo): this {
         this.modelValue = model;
         return this;
     }
 
-    maxTokens(maxTokens: MessageCreateParamsBase["max_tokens"]): this {
+    maxTokens(maxTokens: number): this {
         this.maxTokensValue = maxTokens;
         return this;
     }
 
-    system(system: NonNullable<MessageCreateParamsBase["system"]>): this {
+    system(system: string | TextBlockParam[]): this {
         this.systemValue = system;
         return this;
     }
 
-    thinking(
-        thinking: NonNullable<MessageCreateParamsBase["thinking"]>,
-    ): this {
+    thinking(thinking: ThinkingConfigParam): this {
         this.thinkingValue = thinking;
         return this;
     }
 
-    cacheControl(
-        cacheControl: NonNullable<MessageCreateParamsBase["cache_control"]>,
-    ): this {
+    cacheControl(cacheControl: CacheControlEphemeral): this {
         this.cacheControlValue = cacheControl;
         return this;
     }
 
-    container(
-        container: NonNullable<MessageCreateParamsBase["container"]>,
-    ): this {
+    container(container: string): this {
         this.containerValue = container;
         return this;
     }
 
-    inferenceGeo(
-        geo: NonNullable<MessageCreateParamsBase["inference_geo"]>,
-    ): this {
+    inferenceGeo(geo: string): this {
         this.inferenceGeoValue = geo;
         return this;
     }
 
-    metadata(
-        metadata: NonNullable<MessageCreateParamsBase["metadata"]>,
-    ): this {
+    metadata(metadata: { user_id?: string | null }): this {
         this.metadataValue = metadata;
         return this;
     }
 
-    outputConfig(
-        config: NonNullable<MessageCreateParamsBase["output_config"]>,
-    ): this {
+    outputConfig(config: FormatResponse): this {
         this.outputConfigValue = config;
         return this;
     }
 
-    serviceTier(
-        tier: NonNullable<MessageCreateParamsBase["service_tier"]>,
-    ): this {
+    serviceTier(tier: "auto" | "standard_only"): this {
         this.serviceTierValue = tier;
         return this;
     }
 
-    stopSequences(
-        sequences: NonNullable<MessageCreateParamsBase["stop_sequences"]>,
-    ): this {
+    stopSequences(sequences: string[]): this {
         this.stopSequencesValue = sequences;
         return this;
     }
 
-    stream(stream: NonNullable<MessageCreateParamsBase["stream"]>): this {
+    stream(stream: boolean): this {
         this.streamValue = stream;
         return this;
     }
 
-    build(): MessageCreateParamsBase {
-        const body: MessageCreateParamsBase = {
+    build(): AnthropicBody {
+        const body: AnthropicBody = {
             max_tokens: this.maxTokensValue,
             messages: this.messagesValue,
             model: this.modelValue,

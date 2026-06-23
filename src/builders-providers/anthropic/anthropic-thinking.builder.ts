@@ -1,4 +1,15 @@
-import type { ThinkingConfigParam } from "../../types-providers/types.anthropic.js";
+export interface AnthropicThinkingEnabled {
+    type: "enabled";
+    budget_tokens: number;
+}
+
+export interface AnthropicThinkingDisabled {
+    type: "disabled";
+}
+
+export type AnthropicThinking =
+    | AnthropicThinkingEnabled
+    | AnthropicThinkingDisabled;
 
 export class AnthropicThinkingBuilder {
     private typeValue: "enabled" | "disabled" = "enabled";
@@ -14,7 +25,7 @@ export class AnthropicThinkingBuilder {
         return this;
     }
 
-    build(): ThinkingConfigParam {
+    build(): AnthropicThinking {
         if (this.typeValue === "enabled") {
             return {
                 type: "enabled",

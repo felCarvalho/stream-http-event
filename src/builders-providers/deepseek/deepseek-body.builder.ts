@@ -1,14 +1,37 @@
 import type {
-    DeepSeekRequestBody,
+    DeepSeekModel,
     DeepSeekTool,
     DeepSeekMessage,
     DeepSeekThinking,
     DeepSeekResponseFormat,
 } from "../../types-providers/types.deepseek.js";
 
+export interface DeepSeekBody {
+    messages: DeepSeekMessage[];
+    model: DeepSeekModel;
+    thinking?: DeepSeekThinking | null;
+    max_tokens?: number | null;
+    response_format?: DeepSeekResponseFormat | null;
+    stop?: string | string[] | null;
+    stream?: boolean | null;
+    stream_options?: { include_usage: boolean } | null;
+    temperature?: number | null;
+    top_p?: number | null;
+    tools?: DeepSeekTool[] | null;
+    tool_choice?:
+        | "none"
+        | "auto"
+        | "required"
+        | { type: "function"; function: { name: string } }
+        | null;
+    logprobs?: boolean | null;
+    top_logprobs?: number | null;
+    user_id?: string | null;
+}
+
 export class DeepSeekBodyBuilder {
-    private messagesValue: DeepSeekRequestBody["messages"] = [];
-    private modelValue: DeepSeekRequestBody["model"] = "deepseek-v4-pro";
+    private messagesValue: DeepSeekMessage[] = [];
+    private modelValue: DeepSeekModel = "deepseek-v4-pro";
     private thinkingValue?: DeepSeekThinking | null;
     private maxTokensValue?: number | null;
     private responseFormatValue?: DeepSeekResponseFormat | null;
@@ -18,96 +41,98 @@ export class DeepSeekBodyBuilder {
     private temperatureValue?: number | null;
     private topPValue?: number | null;
     private toolsValue: DeepSeekTool[] = [];
-    private toolChoiceValue?: NonNullable<DeepSeekRequestBody["tool_choice"]>;
+    private toolChoiceValue?:
+        | "none"
+        | "auto"
+        | "required"
+        | { type: "function"; function: { name: string } };
     private logprobsValue?: boolean | null;
     private topLogprobsValue?: number | null;
     private userIdValue?: string | null;
 
-    messages(messages: DeepSeekRequestBody["messages"]): this {
+    messages(messages: DeepSeekMessage[]): this {
         this.messagesValue = messages;
         return this;
     }
 
-    model(model: DeepSeekRequestBody["model"]): this {
+    model(model: DeepSeekModel): this {
         this.modelValue = model;
         return this;
     }
 
-    thinking(thinking: NonNullable<DeepSeekRequestBody["thinking"]>): this {
+    thinking(thinking: DeepSeekThinking): this {
         this.thinkingValue = thinking;
         return this;
     }
 
-    maxTokens(maxTokens: NonNullable<DeepSeekRequestBody["max_tokens"]>): this {
+    maxTokens(maxTokens: number): this {
         this.maxTokensValue = maxTokens;
         return this;
     }
 
-    responseFormat(
-        format: NonNullable<DeepSeekRequestBody["response_format"]>,
-    ): this {
+    responseFormat(format: DeepSeekResponseFormat): this {
         this.responseFormatValue = format;
         return this;
     }
 
-    stop(stop: NonNullable<DeepSeekRequestBody["stop"]>): this {
+    stop(stop: string | string[]): this {
         this.stopValue = stop;
         return this;
     }
 
-    stream(stream: NonNullable<DeepSeekRequestBody["stream"]>): this {
+    stream(stream: boolean): this {
         this.streamValue = stream;
         return this;
     }
 
-    streamOptions(
-        options: NonNullable<DeepSeekRequestBody["stream_options"]>,
-    ): this {
+    streamOptions(options: { include_usage: boolean }): this {
         this.streamOptionsValue = options;
         return this;
     }
 
-    temperature(
-        temperature: NonNullable<DeepSeekRequestBody["temperature"]>,
-    ): this {
+    temperature(temperature: number): this {
         this.temperatureValue = temperature;
         return this;
     }
 
-    topP(topP: NonNullable<DeepSeekRequestBody["top_p"]>): this {
+    topP(topP: number): this {
         this.topPValue = topP;
         return this;
     }
 
-    tools(tools: NonNullable<DeepSeekRequestBody["tools"]>): this {
+    tools(tools: DeepSeekTool[]): this {
         this.toolsValue = tools;
         return this;
     }
 
-    toolChoice(choice: NonNullable<DeepSeekRequestBody["tool_choice"]>): this {
+    toolChoice(
+        choice:
+            | "none"
+            | "auto"
+            | "required"
+            | { type: "function"; function: { name: string } },
+    ): this {
         this.toolChoiceValue = choice;
         return this;
     }
 
-    logprobs(logprobs: NonNullable<DeepSeekRequestBody["logprobs"]>): this {
+    logprobs(logprobs: boolean): this {
         this.logprobsValue = logprobs;
         return this;
     }
 
-    topLogprobs(
-        topLogprobs: NonNullable<DeepSeekRequestBody["top_logprobs"]>,
-    ): this {
+    topLogprobs(topLogprobs: number): this {
         this.topLogprobsValue = topLogprobs;
         return this;
     }
 
-    userId(userId: NonNullable<DeepSeekRequestBody["user_id"]>): this {
+    userId(userId: string): this {
         this.userIdValue = userId;
         return this;
     }
 
-    build(): DeepSeekRequestBody {
-        const body: DeepSeekRequestBody = {
+    build(): DeepSeekBody {
+        const body: DeepSeekBody = {
             messages: this.messagesValue,
             model: this.modelValue,
         };

@@ -1,24 +1,26 @@
-import type {
-    DeepSeekThinking,
-    DeepSeekReasoningEffort,
-} from "../../types-providers/types.deepseek.js";
+export type DeepSeekReasonEffort = "high" | "max";
+
+export interface DeepSeekThink {
+    type: "enabled" | "disabled";
+    reasoning_effort?: DeepSeekReasonEffort;
+}
 
 export class DeepSeekThinkingBuilder {
-    private typeValue: DeepSeekThinking["type"] = "enabled";
-    private reasoningEffortValue?: DeepSeekReasoningEffort;
+    private typeValue: "enabled" | "disabled" = "enabled";
+    private reasoningEffortValue?: DeepSeekReasonEffort;
 
-    type(type: DeepSeekThinking["type"]): this {
+    type(type: "enabled" | "disabled"): this {
         this.typeValue = type;
         return this;
     }
 
-    reasoningEffort(effort: NonNullable<DeepSeekThinking["reasoning_effort"]>): this {
+    reasoningEffort(effort: DeepSeekReasonEffort): this {
         this.reasoningEffortValue = effort;
         return this;
     }
 
-    build(): DeepSeekThinking {
-        const thinking: DeepSeekThinking = { type: this.typeValue };
+    build(): DeepSeekThink {
+        const thinking: DeepSeekThink = { type: this.typeValue };
         if (this.reasoningEffortValue !== undefined)
             thinking.reasoning_effort = this.reasoningEffortValue;
         return thinking;
