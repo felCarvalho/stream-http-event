@@ -6,6 +6,7 @@ import type {
     FetchOptions,
     stateLocalType,
     ExtractorsType,
+    BeforeRequestFn,
 } from "./type.js";
 export class StreamHttpEvent {
     private url: string = "";
@@ -14,6 +15,7 @@ export class StreamHttpEvent {
     private onDone?: (finalData: { chunks: Record<string, unknown>[] }) => void;
     private body?: Record<string, unknown>;
     private extractors?: ExtractorsType;
+    private beforeRequest?: BeforeRequestFn;
 
     public dataFetch<
         H extends Record<string, string> = Record<string, string>,
@@ -25,6 +27,7 @@ export class StreamHttpEvent {
         timeOut,
         onDone,
         extractors,
+        beforeRequest,
     }: dataFetchType<H, B>) {
         this.url = url;
         this.headers = headers ?? ({} as Record<string, string>);
@@ -32,6 +35,7 @@ export class StreamHttpEvent {
         this.onDone = onDone;
         this.body = body;
         this.extractors = extractors;
+        this.beforeRequest = beforeRequest;
     }
 
     private stateLocal() {
@@ -242,7 +246,7 @@ export class StreamHttpEvent {
 
                 chunksAcumulated.push(extractedValues);
 
-                let traficChunk = "";
+                /*let traficChunk = "";
 
                 if (prefixKeys) {
                     for (const [key, value] of Object.entries(
@@ -262,13 +266,14 @@ export class StreamHttpEvent {
                                 : JSON.stringify(value);
                         traficChunk += `${strValue}\n`;
                     }
-                }
+                    }*/
 
-                if (traficChunk) {
-                    traficChunk += "\n";
+                if (extractedValues) {
+                    const valuetrafick =
+                        JSON.stringify(extractedValues) + "\n\n";
                     yield encodeBytes
-                        ? encoder.encode(traficChunk)
-                        : traficChunk;
+                        ? encoder.encode(`data: ${valuetrafick}`)
+                        : `data: ${valuetrafick}`;
                 }
 
                 state.clearState();
@@ -289,10 +294,23 @@ export class StreamHttpEvent {
             throw new Error("dataFetch() precisa da url do seu provedor de IA");
         }
 
-        const fetcher = await fetch(this.url, {
+        let url = this.url;
+        let headers = this.headers;
+        let body = this.body;
+
+        if (this.beforeRequest) {
+            const result = await this.beforeRequest({ url, headers, body });
+            if (result) {
+                url = result.url ?? url;
+                headers = result.headers ?? headers;
+                body = result.body ?? body;
+            }
+        }
+
+        const fetcher = await fetch(url, {
             method: method ?? "POST",
-            headers: this.headers,
-            body: this.body ? JSON.stringify(this.body) : undefined,
+            headers,
+            body: body ? JSON.stringify(body) : undefined,
             signal: signal,
         });
 

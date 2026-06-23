@@ -26,7 +26,6 @@ Funciona em qualquer runtime com `fetch`, `AsyncGenerator`, `TextDecoder` e `Tex
     - [Streaming OpenAI](#streaming-openai)
     - [DeepSeek com builders](#deepseek-com-builders)
     - [Anthropic](#anthropic)
-    - [Saída sem prefixKeys](#saída-sem-prefixkeys)
     - [Cancelamento](#cancelamento)
     - [Salvando resposta completa (onDone)](#salvando-resposta-completa-ondon)
     - [Pipe para arquivo](#pipe-para-arquivo)
@@ -83,7 +82,7 @@ for await (const chunk of generator) {
 A saída de cada chunk será algo como:
 
 ```
-content: "Olá"\n
+data: {"content":"Olá"}
 
 ```
 
@@ -109,13 +108,9 @@ A API antiga usava funções JavaScript para extrair dados. A nova usa **paths**
 
 ### Formato de saída
 
-| Antes                                                     | Depois                                                                       |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| Sempre `data: {...}\nevent: ...\n\n` (formato SSE padrão) | Controlado por `prefixKeys`: `true` → `key: valor\n`, `false` → só `valor\n` |
-
-### Nomenclatura
-
-- `formatSSE` foi renomeado para **`prefixKeys`** — descreve com precisão o que faz
+| Antes                                                     | Depois                                               |
+| --------------------------------------------------------- | ---------------------------------------------------- |
+| Sempre `data: {...}\nevent: ...\n\n` (formato SSE padrão) | Sempre `data: { "chave": "valor" }\n\n` (JSON do objeto extraído inteiro) |
 
 ### Código removido
 
@@ -147,7 +142,8 @@ stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 | `body`       | `Record<string, unknown>`                      | Não         | Corpo da requisição (serializado como JSON)                                                                |
 | `timeOut`    | `number`                                       | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk                                               |
 | `onDone`     | `(finalData: Record<string, unknown>) => void` | Não         | Callback disparado quando o stream termina. Recebe `{ chunks }` — array de objetos extraídos chunk a chunk |
-| `extractors` | `ExtractorsType`                               | Sim         | Configuração dos extratores de dados                                                                       |
+| `extractors`    | `ExtractorsType`                               | Sim         | Configuração dos extratores de dados                                                                       |
+| `beforeRequest` | `BeforeRequestFn`                              | Não         | Função assíncrona executada antes do fetch. Recebe `{ url, headers, body }` e pode modificar cada campo     |
 
 ---
 
@@ -200,7 +196,6 @@ stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, u
 | `method`      | `string`      | `"POST"` | Método HTTP                                                            |
 | `signal`      | `AbortSignal` | —        | Sinal do AbortController para cancelamento                             |
 | `encodeBytes` | `boolean`     | `false`  | Se `true`, chunks yieldados são `Uint8Array`. Se `false`, são strings  |
-| `prefixKeys`  | `boolean`     | `true`   | Se `true`, saída no formato `key: valor\n`. Se `false`, apenas o valor |
 
 **Retorna:**
 
@@ -312,17 +307,6 @@ stream.dataFetch({
 const generator = await stream.fetchIA();
 
 for await (const chunk of generator) {
-    process.stdout.write(chunk);
-}
-```
-
-### Saída sem prefixKeys
-
-```typescript
-const generator = await stream.fetchIA({ prefixKeys: false });
-
-for await (const chunk of generator) {
-    // chunk: "Olá"\n  em vez de  content: "Olá"\n
     process.stdout.write(chunk);
 }
 ```
@@ -472,13 +456,11 @@ Content-Type: text/event-stream?
     |        timeout() — reseta timer de inatividade
     |               |
     |               ↓
-    |        Monta traficChunk com as keys extraídas do state
-    |               |
-    |               ├── prefixKeys true  → "key: valor\n"
-    |               └── prefixKeys false → "valor\n"
-    |               |
-    |               ↓
-    |        yield chunk (string | Uint8Array)
+        |        Serializa extractedValues com JSON.stringify
+        |        e monta "data: {JSON}\\n\\n"
+        |               |
+        |               ↓
+        |        yield chunk (string | Uint8Array)
     |               |
     |               ↓
     |        clearState() — limpa state para o próximo chunk
@@ -546,12 +528,10 @@ Content-Type: text/event-stream?
 - Pega todas as keys de `defaultExtract` + `conditionalxtractor`
 - Busca cada valor no state via `getStateOne()`
 - Se nenhuma key tiver valor (`hasValue === false`), o chunk é pulado (`continue`)
-- Monta a string de saída:
-    - `prefixKeys: true` → `key: valor\n` (ex: `content: "Olá"\n`)
-    - `prefixKeys: false` → `valor\n` (ex: `"Olá"\n`)
-- Adiciona `\n` ao final e faz yield
+- Serializa o objeto `extractedValues` com `JSON.stringify` e adiciona `\n\n`
+- Monta a saída no formato SSE: ``data: ${JSON.stringify(extractedValues)}\n\n``
+- Faz yield da string (ou `Uint8Array` se `encodeBytes: true`)
 - O objeto extraído é acumulado via `push` em `chunks` (array de objetos) para uso no `onDone`
-- Valores string são usados diretamente; objetos/arrays/números são serializados com `JSON.stringify`
 
 **11. `clearState()`** — após yield, o state é completamente limpo para o próximo chunk não acumular dados obsoletos.
 
@@ -606,7 +586,6 @@ interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
-    prefixKeys?: boolean;
 }
 
 interface ExtractorsType {
@@ -624,7 +603,7 @@ interface condicionalExtract {
     path: string;
     condition: string;
 }
-```
+\`\`\`
 
 ---
 
@@ -661,7 +640,6 @@ Este é um projeto de estudo e aprendizado. Está funcional e em uso, mas pode c
     - [OpenAI Streaming](#openai-streaming)
     - [DeepSeek with Builders](#deepseek-with-builders)
     - [Anthropic](#anthropic-2)
-    - [Output without prefixKeys](#output-without-prefixkeys)
     - [Cancellation](#cancellation)
     - [Saving the Full Response (onDone)](#saving-the-full-response-ondon)
     - [Pipe to File](#pipe-to-file)
@@ -717,10 +695,10 @@ for await (const chunk of generator) {
 
 Each chunk output looks like:
 
-```
-content: "Hello"\n
+\`\`\`
+data: {"content":"Hello"}
 
-```
+\`\`\`
 
 ---
 
@@ -744,13 +722,9 @@ The old API used JavaScript functions to extract data. The new one uses **path s
 
 ### Output format
 
-| Before                                                     | After                                                                         |
-| ---------------------------------------------------------- | ----------------------------------------------------------------------------- |
-| Always `data: {...}\nevent: ...\n\n` (standard SSE format) | Controlled by `prefixKeys`: `true` → `key: value\n`, `false` → just `value\n` |
-
-### Naming
-
-- `formatSSE` renamed to **`prefixKeys`** — accurately describes what it does
+| Before                                                     | After                                                     |
+| ---------------------------------------------------------- | --------------------------------------------------------- |
+| Always `data: {...}\nevent: ...\n\n` (standard SSE format) | Always `data: { "key": "value" }\n\n` (JSON of the whole extracted object) |
 
 ### Removed code
 
@@ -782,7 +756,8 @@ stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 | `body`       | `Record<string, unknown>`                      | No       | Request body (serialized as JSON)                                                                 |
 | `timeOut`    | `number`                                       | No       | Inactivity timeout in milliseconds. Resets on each chunk                                          |
 | `onDone`     | `(finalData: Record<string, unknown>) => void` | No       | Callback fired when the stream ends. Receives `{ chunks }` — array of extracted objects per chunk |
-| `extractors` | `ExtractorsType`                               | Yes      | Extractor configuration                                                                           |
+| `extractors`    | `ExtractorsType`                               | Yes      | Extractor configuration                                                                           |
+| `beforeRequest` | `BeforeRequestFn`                              | No       | Async function executed before fetch. Receives `{ url, headers, body }` and can modify each field |
 
 ---
 
@@ -835,7 +810,6 @@ stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, u
 | `method`      | `string`      | `"POST"` | HTTP method                                                                |
 | `signal`      | `AbortSignal` | —        | AbortController signal for cancellation                                    |
 | `encodeBytes` | `boolean`     | `false`  | If `true`, yielded chunks are `Uint8Array`. If `false`, chunks are strings |
-| `prefixKeys`  | `boolean`     | `true`   | If `true`, output as `key: value\n`. If `false`, value only                |
 
 **Returns:**
 
@@ -947,17 +921,6 @@ stream.dataFetch({
 const generator = await stream.fetchIA();
 
 for await (const chunk of generator) {
-    process.stdout.write(chunk);
-}
-```
-
-### Output without prefixKeys
-
-```typescript
-const generator = await stream.fetchIA({ prefixKeys: false });
-
-for await (const chunk of generator) {
-    // chunk: "Hello"\n  instead of  content: "Hello"\n
     process.stdout.write(chunk);
 }
 ```
@@ -1107,13 +1070,11 @@ Content-Type: text/event-stream?
     |        timeout() — resets inactivity timer
     |               |
     |               ↓
-    |        Builds traficChunk with extracted keys from state
-    |               |
-    |               ├── prefixKeys true  → "key: value\n"
-    |               └── prefixKeys false → "value\n"
-    |               |
-    |               ↓
-    |        yield chunk (string | Uint8Array)
+        |        Serializes extractedValues with JSON.stringify
+        |        and builds "data: {JSON}\\n\\n"
+        |               |
+        |               ↓
+        |        yield chunk (string | Uint8Array)
     |               |
     |               ↓
     |        clearState() — clears state for next chunk
@@ -1181,12 +1142,10 @@ Content-Type: text/event-stream?
 - Gets all keys from `defaultExtract` + `conditionalxtractor`
 - Looks up each value in state via `getStateOne()`
 - If no key has a value (`hasValue === false`), the chunk is skipped (`continue`)
-- Builds the output string:
-    - `prefixKeys: true` → `key: value\n` (e.g. `content: "Hello"\n`)
-    - `prefixKeys: false` → `value\n` (e.g. `"Hello"\n`)
-- Adds `\n` at the end and yields
+- Serializes the `extractedValues` object with `JSON.stringify` and appends `\n\n`
+- Builds the SSE output: ``data: ${JSON.stringify(extractedValues)}\n\n``
+- Yields the string (or `Uint8Array` if `encodeBytes: true`)
 - The extracted object is pushed into `chunks` array (object accumulation) for use in `onDone`
-- String values are used directly; objects/arrays/numbers are serialized with `JSON.stringify`
 
 **11. `clearState()`** — after yielding, the state is fully cleared so the next chunk doesn't carry stale data.
 
@@ -1241,7 +1200,6 @@ interface FetchOptions {
     signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
-    prefixKeys?: boolean;
 }
 
 interface ExtractorsType {
@@ -1259,7 +1217,7 @@ interface condicionalExtract {
     path: string;
     condition: string;
 }
-```
+\`\`\`
 
 ---
 

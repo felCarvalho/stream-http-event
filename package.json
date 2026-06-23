@@ -1,9 +1,25 @@
 {
     "name": "@felipe-lib/stream-http-event",
-    "version": "2.1.0",
+    "version": "2.1.1",
     "description": "",
-    "main": "dist/streamHttpEvent.js",
-    "types": "dist/streamHttpEvent.d.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/streamHttpEvent.d.ts",
+            "default": "./dist/streamHttpEvent.js"
+        },
+        "./type": {
+            "types": "./dist/type.d.ts",
+            "default": "./dist/type.js"
+        },
+        "./builders-providers/*": {
+            "types": "./dist/builders-providers/*/index.d.ts",
+            "default": "./dist/builders-providers/*/index.js"
+        },
+        "./types-providers/*": {
+            "types": "./dist/types-providers/*.d.ts",
+            "default": "./dist/types-providers/*.js"
+        }
+    },
     "files": [
         "dist"
     ],
