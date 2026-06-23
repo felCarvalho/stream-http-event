@@ -603,7 +603,7 @@ interface condicionalExtract {
     path: string;
     condition: string;
 }
-\`\`\`
+```
 
 ---
 
@@ -695,10 +695,10 @@ for await (const chunk of generator) {
 
 Each chunk output looks like:
 
-\`\`\`
+```
 data: {"content":"Hello"}
 
-\`\`\`
+```
 
 ---
 
@@ -1217,7 +1217,7 @@ interface condicionalExtract {
     path: string;
     condition: string;
 }
-\`\`\`
+```
 
 ---
 
