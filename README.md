@@ -1,6 +1,6 @@
 # @felipe-lib/stream-http-event
 
-[![npm version](https://img.shields.io/badge/npm-v2.0.0-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
+[![npm version](https://img.shields.io/badge/npm-v2.0.1-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
 [![license](https://img.shields.io/badge/license-ISC-green)](./LICENSE)
 
 **Zero dependências em runtime.** Consuma respostas HTTP em streaming de provedores de IA (OpenAI, Anthropic, Groq, DeepSeek, etc.) via o protocolo [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
@@ -120,7 +120,6 @@ A API antiga usava funções JavaScript para extrair dados. A nova usa **paths**
 ### Código removido
 
 - `onData` e `onEvent` — declarados mas nunca chamados
-- `getState`, `clearStateByKey`, `hasStateByKey` — métodos não utilizados no state local
 - `try { ... } catch (e) { throw e }` — blocos redundantes
 
 ### Bugs corrigidos
@@ -384,7 +383,7 @@ fileStream.end();
 
 ### Fallback não-streaming
 
-Se a resposta não for `text/event-stream`, `fetchIA()` retorna o JSON parseado diretamente:
+Se a resposta não for `text/event-stream`, `fetchIA()` retorna o JSON parseado diretamente. Extratores **não** são aplicados — o objeto retornado é o JSON bruto:
 
 ```typescript
 stream.dataFetch({
@@ -395,15 +394,10 @@ stream.dataFetch({
         messages: [{ role: "user", content: "Olá" }],
         stream: false,
     },
-    extractors: {
-        defaultExtract: [
-            { key: "content", forExtract: "choices[0].message.content" },
-        ],
-    },
 });
 
 const result = await stream.fetchIA();
-console.log(result.content);
+console.log(result.choices?.[0]?.message?.content);
 ```
 
 ### Múltiplos provedores
@@ -749,7 +743,6 @@ The old API used JavaScript functions to extract data. The new one uses **path s
 ### Removed code
 
 - `onData` and `onEvent` — declared but never called
-- `getState`, `clearStateByKey`, `hasStateByKey` — unused methods in local state
 - `try { ... } catch (e) { throw e }` — redundant blocks
 
 ### Fixed bugs
@@ -1013,7 +1006,7 @@ fileStream.end();
 
 ### Non-Streaming Fallback
 
-If the response is not `text/event-stream`, `fetchIA()` returns the parsed JSON directly:
+If the response is not `text/event-stream`, `fetchIA()` returns the parsed JSON directly. Extractors are **not** applied — the returned object is the raw JSON:
 
 ```typescript
 stream.dataFetch({
@@ -1024,15 +1017,10 @@ stream.dataFetch({
         messages: [{ role: "user", content: "Hello" }],
         stream: false,
     },
-    extractors: {
-        defaultExtract: [
-            { key: "content", forExtract: "choices[0].message.content" },
-        ],
-    },
 });
 
 const result = await stream.fetchIA();
-console.log(result.content);
+console.log(result.choices?.[0]?.message?.content);
 ```
 
 ### Multiple Providers
