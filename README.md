@@ -1,6 +1,6 @@
 # @felipe-lib/stream-http-event
 
-[![npm version](https://img.shields.io/badge/npm-v2.2.0-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
+[![npm version](https://img.shields.io/badge/npm-v2.2.1-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
 [![license](https://img.shields.io/badge/license-ISC-green)](./LICENSE)
 
 **Zero dependências em runtime.** Consuma respostas HTTP em streaming de provedores de IA (OpenAI, Anthropic, Groq, DeepSeek, etc.) via o protocolo [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
@@ -124,7 +124,7 @@ A API antiga usava funções JavaScript para extrair dados. A nova usa **paths**
 - `types.anthropic.ts`: campo `ccontent` corrigido para `content` (typo)
 - `types.anthropic.ts`: duplicata removida de union type
 
-### v2.2.0
+### v2.2.1
 
 **`acumullate`** — nova flag de acumulação de valores extraídos. Disponível em três níveis:
 
@@ -795,7 +795,7 @@ The old API used JavaScript functions to extract data. The new one uses **path s
 - `types.anthropic.ts`: field `ccontent` corrected to `content` (typo)
 - `types.anthropic.ts`: duplicate removed from union type
 
-### v2.2.0
+### v2.2.1
 
 **`acumullate`** — new accumulation flag for extracted values. Available in three levels:
 
