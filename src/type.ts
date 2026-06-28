@@ -22,12 +22,14 @@ export interface stateLocalType {
 export interface condicionalExtract {
     key: string;
     path: string;
+    acumullate?: boolean;
     condition: string;
 }
 
 export interface extract {
     key: string;
     forExtract: string;
+    acumullate?: boolean;
 }
 
 export interface ExtractorsType {
@@ -45,11 +47,6 @@ export type BeforeRequestFn = (
     config: BeforeRequestConfig,
 ) => Promise<BeforeRequestConfig | void>;
 
-export interface RetryType {
-    max: number;
-    statusCode: number[];
-}
-
 export interface dataFetchType<
     H extends Record<string, string> = Record<string, string>,
     B extends Record<string, unknown> = Record<string, unknown>,
@@ -57,11 +54,11 @@ export interface dataFetchType<
     url: string;
     headers?: H;
     timeOut?: number;
-    onDone?: (finalData: Record<string, unknown>) => void;
+    onDone?: (finalData: { chunks: Record<string, unknown>[] }) => void;
     body?: B;
-    extractors: ExtractorsType;
+    extractors?: ExtractorsType;
     beforeRequest?: BeforeRequestFn;
-    retry?: RetryType;
+    acumullate?: boolean;
 }
 
 export interface serializeType {
@@ -77,14 +74,11 @@ export interface timeoutType {
 export interface streamIaType {
     body: ReadableStream<Uint8Array>;
     encodeBytes: boolean | undefined;
-    prefixKeys?: boolean;
 }
 
 export interface FetchOptions {
-    signal?: AbortSignal;
     encodeBytes?: boolean;
     method?: string;
-    prefixKeys?: boolean;
 }
 
 export enum SystemError {

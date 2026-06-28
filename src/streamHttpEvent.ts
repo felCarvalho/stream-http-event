@@ -16,6 +16,8 @@ export class StreamHttpEvent {
     private body?: Record<string, unknown>;
     private extractors?: ExtractorsType;
     private beforeRequest?: BeforeRequestFn;
+    private controller!: AbortController;
+    private acumullate?: boolean;
 
     public dataFetch<
         H extends Record<string, string> = Record<string, string>,
@@ -28,6 +30,7 @@ export class StreamHttpEvent {
         onDone,
         extractors,
         beforeRequest,
+        acumullate,
     }: dataFetchType<H, B>) {
         this.url = url;
         this.headers = headers ?? ({} as Record<string, string>);
@@ -36,6 +39,7 @@ export class StreamHttpEvent {
         this.body = body;
         this.extractors = extractors;
         this.beforeRequest = beforeRequest;
+        this.acumullate = acumullate;
     }
 
     private stateLocal() {
@@ -129,26 +133,47 @@ export class StreamHttpEvent {
     }) {
         const forExtract = this.extractors?.defaultExtract ?? [];
 
-        if (forExtract.length)
+        if (forExtract.length) {
+            let acumulateExtract = "";
+
             for (const extractValue of forExtract) {
                 const value = this.getValueByPath(
                     sseObject,
                     extractValue.forExtract,
                 );
+
+                if (extractValue.acumullate) {
+                    acumulateExtract += value;
+                }
                 state.setState({
-                    [extractValue.key]: value,
+                    [extractValue.key]: extractValue.acumullate
+                        ? acumulateExtract
+                        : value,
                 });
             }
+        }
 
         const forConditional = this.extractors?.conditionalxtractor ?? [];
 
-        if (forConditional.length)
+        if (forConditional.length) {
+            let acumulateCondition = "";
+
             for (const cond of forConditional) {
                 const value = this.getValueByPath(sseObject, cond.path);
+
+                if (cond.acumullate) {
+                    acumulateCondition += value;
+                }
+
                 if (value === cond.condition) {
-                    state.setState({ [cond.key]: value as string });
+                    state.setState({
+                        [cond.key]: cond.acumullate
+                            ? (acumulateCondition as string)
+                            : (value as string),
+                    });
                 }
             }
+        }
     }
 
     private serialize({ buffer, state }: serializeType) {
@@ -184,7 +209,7 @@ export class StreamHttpEvent {
         return false;
     }
 
-    private async *streamIA({ body, encodeBytes, prefixKeys }: streamIaType) {
+    private async *streamIA({ body, encodeBytes }: streamIaType) {
         const bodyReader = body.getReader();
         const buffer = this.bufferControl();
         const timeOutId = this.timeOutControl();
@@ -192,6 +217,7 @@ export class StreamHttpEvent {
         const decoder: TextDecoder = new TextDecoder();
         const encoder: TextEncoder = new TextEncoder();
         let chunksAcumulated: Record<string, unknown>[] = [];
+        let acumulateValue = "";
 
         try {
             while (true) {
@@ -237,7 +263,16 @@ export class StreamHttpEvent {
                 for (const key of extractorKeys) {
                     const value = state.getStateOne(key);
                     if (value !== undefined) {
-                        extractedValues[key] = value;
+                        if (!this.acumullate) {
+                            extractedValues[key] = value;
+                        } else {
+                            acumulateValue +=
+                                typeof value === "string"
+                                    ? value
+                                    : JSON.stringify(value);
+                            extractedValues[key] = JSON.parse(acumulateValue);
+                        }
+
                         hasValue = true;
                     }
                 }
@@ -284,12 +319,7 @@ export class StreamHttpEvent {
         }
     }
 
-    public async fetchIA({
-        encodeBytes,
-        signal,
-        method,
-        prefixKeys = true,
-    }: FetchOptions) {
+    public async fetchIA({ encodeBytes, method }: FetchOptions) {
         if (!this.url) {
             throw new Error("dataFetch() precisa da url do seu provedor de IA");
         }
@@ -311,7 +341,7 @@ export class StreamHttpEvent {
             method: method ?? "POST",
             headers,
             body: body ? JSON.stringify(body) : undefined,
-            signal: signal,
+            signal: this.controller.signal,
         });
 
         if (!fetcher.ok) {
@@ -327,7 +357,6 @@ export class StreamHttpEvent {
         if (contentType?.includes("text/event-stream")) {
             return this.streamIA({
                 body: fetcher.body,
-                prefixKeys,
                 encodeBytes,
             }) as AsyncGenerator<
                 string | Uint8Array<ArrayBuffer>,
@@ -337,5 +366,16 @@ export class StreamHttpEvent {
         } else {
             return fetcher.json();
         }
+    }
+
+    //função para o dev iniciar o ciclo de vida de uma requisição
+    public start() {
+        this.controller = new AbortController();
+        return this.controller;
+    }
+
+    //função para o dev encerrar o ciclo de vida da requisição
+    public abort() {
+        return this.controller.abort();
     }
 }
