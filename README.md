@@ -1,6 +1,6 @@
 # @felipe-lib/stream-http-event
 
-[![npm version](https://img.shields.io/badge/npm-v2.2.1-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
+[![npm version](https://img.shields.io/badge/npm-v2.2.2-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
 [![license](https://img.shields.io/badge/license-ISC-green)](./LICENSE)
 
 **Zero dependências em runtime.** Consuma respostas HTTP em streaming de provedores de IA (OpenAI, Anthropic, Groq, DeepSeek, etc.) via o protocolo [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
@@ -126,11 +126,11 @@ A API antiga usava funções JavaScript para extrair dados. A nova usa **paths**
 
 ### v2.2.1
 
-**`acumullate`** — nova flag de acumulação de valores extraídos. Disponível em três níveis:
+**`accumulate`** — nova flag de acumulação de valores extraídos. Disponível em três níveis:
 
-- **Global** (`dataFetchType.acumullate`): acumula todos os chunks em uma string contínua no output final
-- **Extract padrão** (`extract.acumullate`): concatena valores da mesma chave entre chunks
-- **Extract condicional** (`condicionalExtract.acumullate`): concatena valores da mesma chave entre chunks
+- **Global** (`dataFetchType.accumulate`): acumula todos os chunks em uma string contínua no output final
+- **Extract padrão** (`extract.accumulate`): concatena valores da mesma chave entre chunks
+- **Extract condicional** (`condicionalExtract.accumulate`): concatena valores da mesma chave entre chunks
 
 **`start()` e `abort()`** — novos métodos públicos para gerenciar o ciclo de vida da requisição. Use `start()` para obter o `AbortController` interno e `abort()` para cancelar a requisição.
 
@@ -157,7 +157,7 @@ stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 | `onDone`        | `(finalData: { chunks: Record<string, unknown>[] }) => void` | Não      | Callback disparado quando o stream termina. Recebe `{ chunks }` — array de objetos extraídos chunk a chunk |
 | `extractors`    | `ExtractorsType`                                          | Não         | Configuração dos extratores de dados                                                                       |
 | `beforeRequest` | `BeforeRequestFn`                                         | Não         | Função assíncrona executada antes do fetch. Recebe `{ url, headers, body }` e pode modificar cada campo    |
-| `acumullate`    | `boolean`                                                 | Não         | Se `true`, acumula os valores extraídos de todos os chunks em uma string contínua no output final           |
+| `accumulate`    | `boolean`                                                 | Não         | Se `true`, acumula os valores extraídos de todos os chunks em uma string contínua no output final           |
 
 ---
 
@@ -172,13 +172,13 @@ interface ExtractorsType {
 interface extract {
     key: string;
     forExtract: string;
-    acumullate?: boolean;
+    accumulate?: boolean;
 }
 
 interface condicionalExtract {
     key: string;
     path: string;
-    acumullate?: boolean;
+    accumulate?: boolean;
     condition: string;
 }
 ```
@@ -187,14 +187,14 @@ interface condicionalExtract {
 
 - `key`: nome da chave que será usada na saída e no state interno
 - `forExtract`: caminho JSON para navegar até o valor desejado (ex: `"data.choices[0].delta.content"`)
-- `acumullate`: se `true`, o valor extraído é concatenado aos valores anteriores da mesma chave
+- `accumulate`: se `true`, o valor extraído é concatenado aos valores anteriores da mesma chave
 - Suporta navegação por pontos e colchetes: `"data.choices[0].delta.content"`
 
 **`conditionalxtractor`** — aplicado apenas se a condição for satisfeita:
 
 - `key`: nome da chave de saída
 - `path`: caminho JSON para navegar até o valor
-- `acumullate`: se `true`, o valor extraído é concatenado aos valores anteriores da mesma chave
+- `accumulate`: se `true`, o valor extraído é concatenado aos valores anteriores da mesma chave
 - `condition`: valor esperado. Se o valor no `path` for igual a `condition`, o valor é extraído
 
 **Mesclagem de keys:** as keys de `defaultExtract` e `conditionalxtractor` são combinadas. Se ambos os arrays tiverem entries, **todas** as keys são usadas na saída.
@@ -512,7 +512,7 @@ Content-Type: text/event-stream?
 
 ### Etapas detalhadas
 
-**1. `dataFetch()`** — armazena a configuração (url, headers, body, extractors, timeout, onDone, beforeRequest, acumullate) em propriedades privadas da instância.
+**1. `dataFetch()`** — armazena a configuração (url, headers, body, extractors, timeout, onDone, beforeRequest, accumulate) em propriedades privadas da instância.
 
 **2. `fetchIA()`** — executa `fetch()` com a URL, headers e body configurados. Verifica o `Content-Type` da resposta:
 
@@ -543,8 +543,8 @@ Content-Type: text/event-stream?
 
 **6. `GetValueExtract()`** — para cada objeto SSE parseado, aplica os extractors configurados:
 
-- `defaultExtract`: percorre cada entrada, navega o objeto com `getValueByPath` usando `forExtract`. Se `acumullate` for `true`, concatena o valor atual com os anteriores da mesma chave; senão, salva o valor bruto no state
-- `conditionalxtractor`: percorre cada entrada, navega o objeto com `getValueByPath` usando `path`. Se `acumullate` for `true`, concatena o valor atual com os anteriores da mesma chave. Só salva no state se o valor for estritamente igual a `condition`
+- `defaultExtract`: percorre cada entrada, navega o objeto com `getValueByPath` usando `forExtract`. Se `accumulate` for `true`, concatena o valor atual com os anteriores da mesma chave; senão, salva o valor bruto no state
+- `conditionalxtractor`: percorre cada entrada, navega o objeto com `getValueByPath` usando `path`. Se `accumulate` for `true`, concatena o valor atual com os anteriores da mesma chave. Só salva no state se o valor for estritamente igual a `condition`
 
 **7. `getValueByPath(obj, path)`** — navega por um objeto usando um caminho como `"data.choices[0].delta.content"`. Suporta pontos e colchetes. Retorna `undefined` se o caminho não existir.
 
@@ -560,7 +560,7 @@ Content-Type: text/event-stream?
 
 - Pega todas as keys de `defaultExtract` + `conditionalxtractor`
 - Busca cada valor no state via `getStateOne()`
-- Se `acumullate` global for `true`, acumula os valores em uma string contínua (`acumulateValue`) e usa `JSON.parse` para o chunk final
+- Se `accumulate` global for `true`, acumula os valores em uma string contínua (`acumulateValue`) e usa `JSON.parse` para o chunk final
 - Se nenhuma key tiver valor (`hasValue === false`), o chunk é pulado (`continue`)
 - Serializa o objeto `extractedValues` com `JSON.stringify` e adiciona `\n\n`
 - Monta a saída no formato SSE: `data: ${JSON.stringify(extractedValues)}\n\n`
@@ -619,7 +619,7 @@ interface dataFetchType<
     body?: B;
     extractors?: ExtractorsType;
     beforeRequest?: BeforeRequestFn;
-    acumullate?: boolean;
+    accumulate?: boolean;
 }
 
 interface FetchOptions {
@@ -635,13 +635,13 @@ interface ExtractorsType {
 interface extract {
     key: string;
     forExtract: string;
-    acumullate?: boolean;
+    accumulate?: boolean;
 }
 
 interface condicionalExtract {
     key: string;
     path: string;
-    acumullate?: boolean;
+    accumulate?: boolean;
     condition: string;
 }
 ```
@@ -797,11 +797,11 @@ The old API used JavaScript functions to extract data. The new one uses **path s
 
 ### v2.2.1
 
-**`acumullate`** — new accumulation flag for extracted values. Available in three levels:
+**`accumulate`** — new accumulation flag for extracted values. Available in three levels:
 
-- **Global** (`dataFetchType.acumullate`): accumulates all chunks into a continuous string in the final output
-- **Standard extract** (`extract.acumullate`): concatenates values of the same key across chunks
-- **Conditional extract** (`condicionalExtract.acumullate`): concatenates values of the same key across chunks
+- **Global** (`dataFetchType.accumulate`): accumulates all chunks into a continuous string in the final output
+- **Standard extract** (`extract.accumulate`): concatenates values of the same key across chunks
+- **Conditional extract** (`condicionalExtract.accumulate`): concatenates values of the same key across chunks
 
 **`start()` and `abort()`** — new public methods to manage the request lifecycle. Use `start()` to obtain the internal `AbortController` and `abort()` to cancel the request.
 
@@ -828,7 +828,7 @@ stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 | `onDone`        | `(finalData: { chunks: Record<string, unknown>[] }) => void` | No    | Callback fired when the stream ends. Receives `{ chunks }` — array of extracted objects per chunk |
 | `extractors`    | `ExtractorsType`                                          | No       | Extractor configuration                                                                           |
 | `beforeRequest` | `BeforeRequestFn`                                         | No       | Async function executed before fetch. Receives `{ url, headers, body }` and can modify each field |
-| `acumullate`    | `boolean`                                                 | No       | If `true`, accumulates extracted values from all chunks into a continuous string in the output     |
+| `accumulate`    | `boolean`                                                 | No       | If `true`, accumulates extracted values from all chunks into a continuous string in the output     |
 
 ---
 
@@ -843,13 +843,13 @@ interface ExtractorsType {
 interface extract {
     key: string;
     forExtract: string;
-    acumullate?: boolean;
+    accumulate?: boolean;
 }
 
 interface condicionalExtract {
     key: string;
     path: string;
-    acumullate?: boolean;
+    accumulate?: boolean;
     condition: string;
 }
 ```
@@ -858,14 +858,14 @@ interface condicionalExtract {
 
 - `key`: the output key name, also used internally in state
 - `forExtract`: JSON path to navigate to the desired value (e.g. `"data.choices[0].delta.content"`)
-- `acumullate`: if `true`, the extracted value is concatenated with previous values of the same key
+- `accumulate`: if `true`, the extracted value is concatenated with previous values of the same key
 - Supports dot and bracket notation: `"data.choices[0].delta.content"`
 
 **`conditionalxtractor`** — only applied if the condition is met:
 
 - `key`: output key name
 - `path`: JSON path to navigate to the value
-- `acumullate`: if `true`, the extracted value is concatenated with previous values of the same key
+- `accumulate`: if `true`, the extracted value is concatenated with previous values of the same key
 - `condition`: expected value. If the value at `path` strictly equals `condition`, the value is extracted
 
 **Key merging:** keys from both `defaultExtract` and `conditionalxtractor` are combined. If both arrays have entries, **all** keys are used in the output.
@@ -1183,7 +1183,7 @@ Content-Type: text/event-stream?
 
 ### Detailed steps
 
-**1. `dataFetch()`** — stores the configuration (url, headers, body, extractors, timeout, onDone, beforeRequest, acumullate) in private instance properties.
+**1. `dataFetch()`** — stores the configuration (url, headers, body, extractors, timeout, onDone, beforeRequest, accumulate) in private instance properties.
 
 **2. `fetchIA()`** — executes `fetch()` with the configured URL, headers and body. Checks the response `Content-Type`:
 
@@ -1214,8 +1214,8 @@ Content-Type: text/event-stream?
 
 **6. `GetValueExtract()`** — for each parsed SSE object, applies the configured extractors:
 
-- `defaultExtract`: iterates each entry, navigates the object with `getValueByPath` using `forExtract`. If `acumullate` is `true`, concatenates the current value with previous ones for the same key; otherwise saves the raw value to state
-- `conditionalxtractor`: iterates each entry, navigates the object with `getValueByPath` using `path`. If `acumullate` is `true`, concatenates the current value with previous ones for the same key. Only saves to state if the value strictly equals `condition`
+- `defaultExtract`: iterates each entry, navigates the object with `getValueByPath` using `forExtract`. If `accumulate` is `true`, concatenates the current value with previous ones for the same key; otherwise saves the raw value to state
+- `conditionalxtractor`: iterates each entry, navigates the object with `getValueByPath` using `path`. If `accumulate` is `true`, concatenates the current value with previous ones for the same key. Only saves to state if the value strictly equals `condition`
 
 **7. `getValueByPath(obj, path)`** — navigates an object using a path like `"data.choices[0].delta.content"`. Supports dots and brackets. Returns `undefined` if the path doesn't exist.
 
@@ -1231,7 +1231,7 @@ Content-Type: text/event-stream?
 
 - Gets all keys from `defaultExtract` + `conditionalxtractor`
 - Looks up each value in state via `getStateOne()`
-- If global `acumullate` is `true`, accumulates values into a continuous string (`acumulateValue`) and uses `JSON.parse` for the final chunk
+- If global `accumulate` is `true`, accumulates values into a continuous string (`acumulateValue`) and uses `JSON.parse` for the final chunk
 - If no key has a value (`hasValue === false`), the chunk is skipped (`continue`)
 - Serializes the `extractedValues` object with `JSON.stringify` and appends `\n\n`
 - Builds the SSE output: `data: ${JSON.stringify(extractedValues)}\n\n`
@@ -1290,7 +1290,7 @@ interface dataFetchType<
     body?: B;
     extractors?: ExtractorsType;
     beforeRequest?: BeforeRequestFn;
-    acumullate?: boolean;
+    accumulate?: boolean;
 }
 
 interface FetchOptions {
@@ -1306,13 +1306,13 @@ interface ExtractorsType {
 interface extract {
     key: string;
     forExtract: string;
-    acumullate?: boolean;
+    accumulate?: boolean;
 }
 
 interface condicionalExtract {
     key: string;
     path: string;
-    acumullate?: boolean;
+    accumulate?: boolean;
     condition: string;
 }
 ```

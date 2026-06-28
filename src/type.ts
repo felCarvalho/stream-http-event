@@ -22,14 +22,14 @@ export interface stateLocalType {
 export interface condicionalExtract {
     key: string;
     path: string;
-    acumullate?: boolean;
+    accumulate?: boolean;
     condition: string;
 }
 
 export interface extract {
     key: string;
     forExtract: string;
-    acumullate?: boolean;
+    accumulate?: boolean;
 }
 
 export interface ExtractorsType {
@@ -58,7 +58,7 @@ export interface dataFetchType<
     body?: B;
     extractors?: ExtractorsType;
     beforeRequest?: BeforeRequestFn;
-    acumullate?: boolean;
+    accumulate?: boolean;
 }
 
 export interface serializeType {

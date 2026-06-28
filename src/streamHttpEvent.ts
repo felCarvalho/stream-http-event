@@ -17,7 +17,7 @@ export class StreamHttpEvent {
     private extractors?: ExtractorsType;
     private beforeRequest?: BeforeRequestFn;
     private controller!: AbortController;
-    private acumullate?: boolean;
+    private accumulate?: boolean;
 
     public dataFetch<
         H extends Record<string, string> = Record<string, string>,
@@ -30,7 +30,7 @@ export class StreamHttpEvent {
         onDone,
         extractors,
         beforeRequest,
-        acumullate,
+        accumulate,
     }: dataFetchType<H, B>) {
         this.url = url;
         this.headers = headers ?? ({} as Record<string, string>);
@@ -39,7 +39,7 @@ export class StreamHttpEvent {
         this.body = body;
         this.extractors = extractors;
         this.beforeRequest = beforeRequest;
-        this.acumullate = acumullate;
+        this.accumulate = accumulate;
     }
 
     private stateLocal() {
@@ -142,11 +142,11 @@ export class StreamHttpEvent {
                     extractValue.forExtract,
                 );
 
-                if (extractValue.acumullate) {
+                if (extractValue.accumulate) {
                     acumulateExtract += value;
                 }
                 state.setState({
-                    [extractValue.key]: extractValue.acumullate
+                    [extractValue.key]: extractValue.accumulate
                         ? acumulateExtract
                         : value,
                 });
@@ -161,13 +161,13 @@ export class StreamHttpEvent {
             for (const cond of forConditional) {
                 const value = this.getValueByPath(sseObject, cond.path);
 
-                if (cond.acumullate) {
+                if (cond.accumulate) {
                     acumulateCondition += value;
                 }
 
                 if (value === cond.condition) {
                     state.setState({
-                        [cond.key]: cond.acumullate
+                        [cond.key]: cond.accumulate
                             ? (acumulateCondition as string)
                             : (value as string),
                     });
@@ -263,7 +263,7 @@ export class StreamHttpEvent {
                 for (const key of extractorKeys) {
                     const value = state.getStateOne(key);
                     if (value !== undefined) {
-                        if (!this.acumullate) {
+                        if (!this.accumulate) {
                             extractedValues[key] = value;
                         } else {
                             acumulateValue +=

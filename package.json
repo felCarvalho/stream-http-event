@@ -1,6 +1,6 @@
 {
     "name": "@felipe-lib/stream-http-event",
-    "version": "2.2.1",
+    "version": "2.2.2",
     "description": "",
     "exports": {
         ".": {
