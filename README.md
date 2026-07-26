@@ -1,6 +1,6 @@
 # @felipe-lib/stream-http-event
 
-[![npm version](https://img.shields.io/badge/npm-v2.2.3-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
+[![npm version](https://img.shields.io/badge/npm-v2.3.0-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
 [![license](https://img.shields.io/badge/license-ISC-green)](./LICENSE)
 
 **Zero dependências em runtime.** Consuma respostas HTTP em streaming de provedores de IA (OpenAI, Anthropic, Groq, DeepSeek, etc.) via o protocolo [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
@@ -135,6 +135,16 @@ A API antiga usava funções JavaScript para extrair dados. A nova usa **paths**
 **`start()` e `abort()`** — novos métodos públicos para gerenciar o ciclo de vida da requisição. Use `start()` para obter o `AbortController` interno e `abort()` para cancelar a requisição.
 
 **`extractors` opcional** — o campo `extractors` em `dataFetchType` agora é opcional, permitindo usar `fetchIA()` para chamadas não-streaming sem configurar extratores.
+
+### v2.3.0
+
+**`AnthropicInputSchemaBuilder`** e **`AnthropicToolBuilder`** — novos builders para criação de ferramentas (tools) no provedor Anthropic, análogos aos existentes no DeepSeek.
+
+**`tools()`** e **`toolChoice()`** — novos métodos no `AnthropicBodyBuilder` para configurar ferramentas e escolha de tool no corpo da requisição.
+
+**`AnthropicToolUnion`** — novo type alias exportado que une todos os tipos de ferramenta Anthropic (custom + server tools).
+
+**`tools`** — adicionado a `MessageCreateParamsBase` como `AnthropicToolUnion[]`.
 
 ### v2.2.3
 
@@ -609,11 +619,13 @@ Importe de `@felipe-lib/stream-http-event/builders-providers/deepseek`:
 Importe de `@felipe-lib/stream-http-event/builders-providers/anthropic`:
 
 - `AnthropicHeadersBuilder` — headers com apiKey e versão. Métodos: `apiKey()`, `version()`
-- `AnthropicBodyBuilder` — corpo da requisição. Métodos: `messages()`, `model()`, `maxTokens()`, `system()`, `thinking()`, `cacheControl()`, `container()`, `inferenceGeo()`, `metadata()`, `outputConfig()`, `serviceTier()`, `stopSequences()`, `stream()`
+- `AnthropicBodyBuilder` — corpo da requisição. Métodos: `messages()`, `model()`, `maxTokens()`, `system()`, `thinking()`, `cacheControl()`, `container()`, `inferenceGeo()`, `metadata()`, `outputConfig()`, `serviceTier()`, `stopSequences()`, `stream()`, `tools()`, `toolChoice()`
 - `AnthropicMessageBuilder` — mensagem individual (role, content)
 - `AnthropicThinkingBuilder` — configuração de thinking (type, budget_tokens)
+- `AnthropicInputSchemaBuilder` — schema de entrada da ferramenta (properties, required)
+- `AnthropicToolBuilder` — definição de ferramenta (name, description, inputSchema, strict, ...)
 
-> Cada builder Anthropic exporta sua própria interface de retorno: `AnthropicBody`, `AnthropicMessage`, `AnthropicThinking`.
+> Cada builder Anthropic exporta sua própria interface de retorno: `AnthropicBody`, `AnthropicMessage`, `AnthropicThinking`, `AnthropicInputSchemaBuild`, `AnthropicToolBuild`.
 
 ---
 
@@ -676,7 +688,7 @@ Além disso, cada builder de provedor exporta sua interface de retorno:
 
 **Anthropic:**
 ```typescript
-import type { AnthropicBody, AnthropicMessage, AnthropicThinking }
+import type { AnthropicBody, AnthropicMessage, AnthropicThinking, AnthropicInputSchemaBuild, AnthropicToolBuild, AnthropicToolUnion, ToolChoice, Tool }
     from "@felipe-lib/stream-http-event/builders-providers/anthropic";
 ```
 
@@ -830,6 +842,16 @@ The old API used JavaScript functions to extract data. The new one uses **path s
 **`start()` and `abort()`** — new public methods to manage the request lifecycle. Use `start()` to obtain the internal `AbortController` and `abort()` to cancel the request.
 
 **`extractors` optional** — the `extractors` field in `dataFetchType` is now optional, allowing `fetchIA()` to be used for non-streaming calls without configuring extractors.
+
+### v2.3.0
+
+**`AnthropicInputSchemaBuilder`** and **`AnthropicToolBuilder`** — new builders for creating tool definitions in the Anthropic provider, analogous to the existing DeepSeek builders.
+
+**`tools()`** and **`toolChoice()`** — new methods on `AnthropicBodyBuilder` to configure tools and tool choice in the request body.
+
+**`AnthropicToolUnion`** — new exported type alias that unions all Anthropic tool types (custom + server tools).
+
+**`tools`** — added to `MessageCreateParamsBase` as `AnthropicToolUnion[]`.
 
 ### v2.2.3
 
@@ -1304,11 +1326,13 @@ Import from `@felipe-lib/stream-http-event/builders-providers/deepseek`:
 Import from `@felipe-lib/stream-http-event/builders-providers/anthropic`:
 
 - `AnthropicHeadersBuilder` — headers with apiKey and version. Methods: `apiKey()`, `version()`
-- `AnthropicBodyBuilder` — request body. Methods: `messages()`, `model()`, `maxTokens()`, `system()`, `thinking()`, `cacheControl()`, `container()`, `inferenceGeo()`, `metadata()`, `outputConfig()`, `serviceTier()`, `stopSequences()`, `stream()`
+- `AnthropicBodyBuilder` — request body. Methods: `messages()`, `model()`, `maxTokens()`, `system()`, `thinking()`, `cacheControl()`, `container()`, `inferenceGeo()`, `metadata()`, `outputConfig()`, `serviceTier()`, `stopSequences()`, `stream()`, `tools()`, `toolChoice()`
 - `AnthropicMessageBuilder` — individual message (role, content)
 - `AnthropicThinkingBuilder` — thinking configuration (type, budget_tokens)
+- `AnthropicInputSchemaBuilder` — tool input schema (properties, required)
+- `AnthropicToolBuilder` — tool definition (name, description, inputSchema, strict, ...)
 
-> Each Anthropic builder exports its own return interface: `AnthropicBody`, `AnthropicMessage`, `AnthropicThinking`.
+> Each Anthropic builder exports its own return interface: `AnthropicBody`, `AnthropicMessage`, `AnthropicThinking`, `AnthropicInputSchemaBuild`, `AnthropicToolBuild`.
 
 ---
 
@@ -1371,7 +1395,7 @@ Additionally, each provider builder exports its own return interface:
 
 **Anthropic:**
 ```typescript
-import type { AnthropicBody, AnthropicMessage, AnthropicThinking }
+import type { AnthropicBody, AnthropicMessage, AnthropicThinking, AnthropicInputSchemaBuild, AnthropicToolBuild, AnthropicToolUnion, ToolChoice, Tool }
     from "@felipe-lib/stream-http-event/builders-providers/anthropic";
 ```
 
