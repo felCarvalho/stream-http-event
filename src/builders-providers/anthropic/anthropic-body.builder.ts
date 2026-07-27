@@ -27,6 +27,7 @@ export interface AnthropicBody {
     stream?: boolean;
     tools?: AnthropicToolUnion[];
     tool_choice?: ToolChoice;
+    user_profile_id?: string;
 }
 
 export class AnthropicBodyBuilder {
@@ -45,6 +46,7 @@ export class AnthropicBodyBuilder {
     private streamValue?: boolean;
     private toolsValue: AnthropicToolUnion[] = [];
     private toolChoiceValue?: ToolChoice;
+    private userProfileIdValue?: string;
 
     messages(messages: Messages[]): this {
         this.messagesValue = messages;
@@ -121,6 +123,11 @@ export class AnthropicBodyBuilder {
         return this;
     }
 
+    userProfileId(id: string): this {
+        this.userProfileIdValue = id;
+        return this;
+    }
+
     build(): AnthropicBody {
         const body: AnthropicBody = {
             max_tokens: this.maxTokensValue,
@@ -148,6 +155,8 @@ export class AnthropicBodyBuilder {
         if (this.toolsValue.length) body.tools = this.toolsValue;
         if (this.toolChoiceValue !== undefined)
             body.tool_choice = this.toolChoiceValue;
+        if (this.userProfileIdValue !== undefined)
+            body.user_profile_id = this.userProfileIdValue;
         return body;
     }
 }
