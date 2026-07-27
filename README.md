@@ -619,9 +619,9 @@ Importe de `@felipe-lib/stream-http-event/builders-providers/deepseek`:
 Importe de `@felipe-lib/stream-http-event/builders-providers/anthropic`:
 
 - `AnthropicHeadersBuilder` — headers com apiKey e versão. Métodos: `apiKey()`, `version()`
-- `AnthropicBodyBuilder` — corpo da requisição. Métodos: `messages()`, `model()`, `maxTokens()`, `system()`, `thinking()`, `cacheControl()`, `container()`, `inferenceGeo()`, `metadata()`, `outputConfig()`, `serviceTier()`, `stopSequences()`, `stream()`, `tools()`, `toolChoice()`
+- `AnthropicBodyBuilder` — corpo da requisição. Métodos: `messages()`, `model()`, `maxTokens()`, `system()`, `thinking()`, `cacheControl()`, `container()`, `inferenceGeo()`, `metadata()`, `outputConfig()`, `serviceTier()`, `stopSequences()`, `stream()`, `tools()`, `toolChoice()`, `userProfileId()`
 - `AnthropicMessageBuilder` — mensagem individual (role, content)
-- `AnthropicThinkingBuilder` — configuração de thinking (type, budget_tokens)
+- `AnthropicThinkingBuilder` — configuração de thinking (type, budget_tokens, display)
 - `AnthropicInputSchemaBuilder` — schema de entrada da ferramenta (properties, required)
 - `AnthropicToolBuilder` — definição de ferramenta (name, description, inputSchema, strict, ...)
 
@@ -1326,9 +1326,9 @@ Import from `@felipe-lib/stream-http-event/builders-providers/deepseek`:
 Import from `@felipe-lib/stream-http-event/builders-providers/anthropic`:
 
 - `AnthropicHeadersBuilder` — headers with apiKey and version. Methods: `apiKey()`, `version()`
-- `AnthropicBodyBuilder` — request body. Methods: `messages()`, `model()`, `maxTokens()`, `system()`, `thinking()`, `cacheControl()`, `container()`, `inferenceGeo()`, `metadata()`, `outputConfig()`, `serviceTier()`, `stopSequences()`, `stream()`, `tools()`, `toolChoice()`
+- `AnthropicBodyBuilder` — request body. Methods: `messages()`, `model()`, `maxTokens()`, `system()`, `thinking()`, `cacheControl()`, `container()`, `inferenceGeo()`, `metadata()`, `outputConfig()`, `serviceTier()`, `stopSequences()`, `stream()`, `tools()`, `toolChoice()`, `userProfileId()`
 - `AnthropicMessageBuilder` — individual message (role, content)
-- `AnthropicThinkingBuilder` — thinking configuration (type, budget_tokens)
+- `AnthropicThinkingBuilder` — thinking configuration (type, budget_tokens, display)
 - `AnthropicInputSchemaBuilder` — tool input schema (properties, required)
 - `AnthropicToolBuilder` — tool definition (name, description, inputSchema, strict, ...)
 
