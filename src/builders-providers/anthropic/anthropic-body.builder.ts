@@ -5,6 +5,8 @@ import type {
     FormatResponse,
     ThinkingConfigParam,
     TextBlockParam,
+    ToolChoice,
+    AnthropicToolUnion,
 } from "../../types-providers/types.anthropic.js";
 
 export interface AnthropicBody {
@@ -23,6 +25,9 @@ export interface AnthropicBody {
     service_tier?: "auto" | "standard_only";
     stop_sequences?: string[];
     stream?: boolean;
+    tools?: AnthropicToolUnion[];
+    tool_choice?: ToolChoice;
+    user_profile_id?: string;
 }
 
 export class AnthropicBodyBuilder {
@@ -39,6 +44,9 @@ export class AnthropicBodyBuilder {
     private serviceTierValue?: "auto" | "standard_only";
     private stopSequencesValue?: string[];
     private streamValue?: boolean;
+    private toolsValue: AnthropicToolUnion[] = [];
+    private toolChoiceValue?: ToolChoice;
+    private userProfileIdValue?: string;
 
     messages(messages: Messages[]): this {
         this.messagesValue = messages;
@@ -105,6 +113,21 @@ export class AnthropicBodyBuilder {
         return this;
     }
 
+    tools(tools: AnthropicToolUnion[]): this {
+        this.toolsValue = tools;
+        return this;
+    }
+
+    toolChoice(choice: ToolChoice): this {
+        this.toolChoiceValue = choice;
+        return this;
+    }
+
+    userProfileId(id: string): this {
+        this.userProfileIdValue = id;
+        return this;
+    }
+
     build(): AnthropicBody {
         const body: AnthropicBody = {
             max_tokens: this.maxTokensValue,
@@ -129,6 +152,11 @@ export class AnthropicBodyBuilder {
         if (this.stopSequencesValue !== undefined)
             body.stop_sequences = this.stopSequencesValue;
         if (this.streamValue !== undefined) body.stream = this.streamValue;
+        if (this.toolsValue.length) body.tools = this.toolsValue;
+        if (this.toolChoiceValue !== undefined)
+            body.tool_choice = this.toolChoiceValue;
+        if (this.userProfileIdValue !== undefined)
+            body.user_profile_id = this.userProfileIdValue;
         return body;
     }
 }

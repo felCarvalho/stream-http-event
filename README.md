@@ -1,6 +1,6 @@
 # @felipe-lib/stream-http-event
 
-[![npm version](https://img.shields.io/badge/npm-v2.2.2-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
+[![npm version](https://img.shields.io/badge/npm-v2.3.0-blue)](https://www.npmjs.com/package/@felipe-lib/stream-http-event)
 [![license](https://img.shields.io/badge/license-ISC-green)](./LICENSE)
 
 **Zero dependências em runtime.** Consuma respostas HTTP em streaming de provedores de IA (OpenAI, Anthropic, Groq, DeepSeek, etc.) via o protocolo [Server-Sent Events (SSE)](https://developer.mozilla.org/en-US/docs/Web/API/Server-sent_events).
@@ -129,12 +129,26 @@ A API antiga usava funções JavaScript para extrair dados. A nova usa **paths**
 **`accumulate`** — nova flag de acumulação de valores extraídos. Disponível em três níveis:
 
 - **Global** (`dataFetchType.accumulate`): acumula todos os chunks em uma string contínua no output final
-- **Extract padrão** (`extract.accumulate`): concatena valores da mesma chave entre chunks
-- **Extract condicional** (`condicionalExtract.accumulate`): concatena valores da mesma chave entre chunks
+- **Extract padrão** (`extract.accumulate`): quando ativado, os valores de **todas as chaves** do `defaultExtract` são concatenados em uma única string compartilhada entre elas
+- **Extract condicional** (`condicionalExtract.accumulate`): quando ativado, os valores de **todas as chaves** do `conditionalxtractor` são concatenados em uma única string compartilhada entre elas
 
 **`start()` e `abort()`** — novos métodos públicos para gerenciar o ciclo de vida da requisição. Use `start()` para obter o `AbortController` interno e `abort()` para cancelar a requisição.
 
 **`extractors` opcional** — o campo `extractors` em `dataFetchType` agora é opcional, permitindo usar `fetchIA()` para chamadas não-streaming sem configurar extratores.
+
+### v2.3.0
+
+**`AnthropicInputSchemaBuilder`** e **`AnthropicToolBuilder`** — novos builders para criação de ferramentas (tools) no provedor Anthropic, análogos aos existentes no DeepSeek.
+
+**`tools()`** e **`toolChoice()`** — novos métodos no `AnthropicBodyBuilder` para configurar ferramentas e escolha de tool no corpo da requisição.
+
+**`AnthropicToolUnion`** — novo type alias exportado que une todos os tipos de ferramenta Anthropic (custom + server tools).
+
+**`tools`** — adicionado a `MessageCreateParamsBase` como `AnthropicToolUnion[]`.
+
+### v2.2.3
+
+Correção do typo `acumullate` para `accumulate` em toda a codebase (propriedade privada, parâmetro de `dataFetch()`, interfaces `extract` e `condicionalExtract`, e tipo `dataFetchType`).
 
 ---
 
@@ -156,7 +170,7 @@ stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 | `timeOut`       | `number`                                                  | Não         | Timeout de inatividade em milissegundos. Reseta a cada chunk                                               |
 | `onDone`        | `(finalData: { chunks: Record<string, unknown>[] }) => void` | Não      | Callback disparado quando o stream termina. Recebe `{ chunks }` — array de objetos extraídos chunk a chunk |
 | `extractors`    | `ExtractorsType`                                          | Não         | Configuração dos extratores de dados                                                                       |
-| `beforeRequest` | `BeforeRequestFn`                                         | Não         | Função assíncrona executada antes do fetch. Recebe `{ url, headers, body }` e pode modificar cada campo    |
+| `beforeRequest` | `BeforeRequestFn`                                         | Não         | Função assíncrona executada antes do fetch. Recebe `{ url, headers, body }` e pode modificar cada campo. Se retornar `void`, os valores originais são mantidos |
 | `accumulate`    | `boolean`                                                 | Não         | Se `true`, acumula os valores extraídos de todos os chunks em uma string contínua no output final           |
 
 ---
@@ -187,14 +201,14 @@ interface condicionalExtract {
 
 - `key`: nome da chave que será usada na saída e no state interno
 - `forExtract`: caminho JSON para navegar até o valor desejado (ex: `"data.choices[0].delta.content"`)
-- `accumulate`: se `true`, o valor extraído é concatenado aos valores anteriores da mesma chave
+- `accumulate`: se `true`, o valor extraído é concatenado a um acumulador **compartilhado entre todas as chaves** do `defaultExtract`
 - Suporta navegação por pontos e colchetes: `"data.choices[0].delta.content"`
 
 **`conditionalxtractor`** — aplicado apenas se a condição for satisfeita:
 
 - `key`: nome da chave de saída
 - `path`: caminho JSON para navegar até o valor
-- `accumulate`: se `true`, o valor extraído é concatenado aos valores anteriores da mesma chave
+- `accumulate`: se `true`, o valor extraído é concatenado a um acumulador **compartilhado entre todas as chaves** do `conditionalxtractor`
 - `condition`: valor esperado. Se o valor no `path` for igual a `condition`, o valor é extraído
 
 **Mesclagem de keys:** as keys de `defaultExtract` e `conditionalxtractor` são combinadas. Se ambos os arrays tiverem entries, **todas** as keys são usadas na saída.
@@ -206,7 +220,7 @@ interface condicionalExtract {
 Executa a requisição HTTP e retorna um `AsyncGenerator` ou um objeto JSON parseado.
 
 ```typescript
-stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, unknown>>
+stream.fetchIA(options: FetchOptions): Promise<any>
 ```
 
 | Parâmetro     | Tipo      | Padrão   | Descrição                                                             |
@@ -459,6 +473,12 @@ dataFetch()
 fetchIA()
     |
     ↓
+beforeRequest() — opcional: modifica url, headers, body
+    |
+    ↓
+fetch() com url, headers, body
+    |
+    ↓
 Content-Type: text/event-stream?
     |
     ├── sim ──▶ streamIA()
@@ -514,12 +534,14 @@ Content-Type: text/event-stream?
 
 **1. `dataFetch()`** — armazena a configuração (url, headers, body, extractors, timeout, onDone, beforeRequest, accumulate) em propriedades privadas da instância.
 
-**2. `fetchIA()`** — executa `fetch()` com a URL, headers e body configurados. Verifica o `Content-Type` da resposta:
+**2. `beforeRequest()`** — se configurado, a função `beforeRequest` é executada com `{ url, headers, body }`. Os valores retornados (se houver) substituem os originais.
+
+**3. `fetchIA()`** — executa `fetch()` com a URL, headers e body (modificados pelo `beforeRequest`, se aplicável). Verifica o `Content-Type` da resposta:
 
 - Se `text/event-stream`: retorna o `AsyncGenerator` de `streamIA()`
 - Caso contrário: retorna `fetcher.json()` (objeto JS parseado)
 
-**3. `streamIA()`** — obtém um `ReadableStreamDefaultReader` e entra em loop infinito. A cada iteração:
+**4. `streamIA()`** — obtém um `ReadableStreamDefaultReader` e entra em loop infinito. A cada iteração:
 
 - Lê bytes do stream com `bodyReader.read()`
 - Decodifica com `TextDecoder` e adiciona ao buffer interno
@@ -528,35 +550,35 @@ Content-Type: text/event-stream?
 - Verifica se encontrou `"data: [DONE]"`
 - Monta o chunk com os valores extraídos e faz yield
 
-**4. `bufferControl()`** — closure que mantém um buffer de string. Métodos:
+**5. `bufferControl()`** — closure que mantém um buffer de string. Métodos:
 
 - `getBuffer()`: retorna o buffer atual
 - `setBuffer(data)`: substitui o buffer
 - `add(data)`: concatena dados ao buffer
 
-**5. `serialize()`** — divide o buffer por `\n\n` (delimitador de mensagens SSE). A última parte (incompleta) volta ao buffer. Para cada mensagem completa:
+**6. `serialize()`** — divide o buffer por `\n\n` (delimitador de mensagens SSE). A última parte (incompleta) volta ao buffer. Para cada mensagem completa:
 
 - Divide por `\n`
 - Interpreta linhas começando com `data:` (JSON) e `event:` (string)
 - Se encontra `"data: [DONE]"`, retorna a string imediatamente para interromper o stream
 - Chama `GetValueExtract()` para cada mensagem
 
-**6. `GetValueExtract()`** — para cada objeto SSE parseado, aplica os extractors configurados:
+**7. `GetValueExtract()`** — para cada objeto SSE parseado, aplica os extractors configurados:
+- `defaultExtract`: percorre cada entrada, navega o objeto com `getValueByPath` usando `forExtract`. Se `accumulate` for `true`, concatena em um **único acumulador compartilhado** para todas as chaves do `defaultExtract`; senão, salva o valor bruto no state
 
-- `defaultExtract`: percorre cada entrada, navega o objeto com `getValueByPath` usando `forExtract`. Se `accumulate` for `true`, concatena o valor atual com os anteriores da mesma chave; senão, salva o valor bruto no state
-- `conditionalxtractor`: percorre cada entrada, navega o objeto com `getValueByPath` usando `path`. Se `accumulate` for `true`, concatena o valor atual com os anteriores da mesma chave. Só salva no state se o valor for estritamente igual a `condition`
+- `conditionalxtractor`: percorre cada entrada, navega o objeto com `getValueByPath` usando `path`. Se `accumulate` for `true`, concatena em um **único acumulador compartilhado** para todas as chaves do `conditionalxtractor`. Só salva no state se o valor for estritamente igual a `condition`
 
-**7. `getValueByPath(obj, path)`** — navega por um objeto usando um caminho como `"data.choices[0].delta.content"`. Suporta pontos e colchetes. Retorna `undefined` se o caminho não existir.
+**8. `getValueByPath(obj, path)`** — navega por um objeto usando um caminho como `"data.choices[0].delta.content"`. Suporta pontos e colchetes. Retorna `undefined` se o caminho não existir.
 
-**8. `stateLocal()`** — closure baseada em `Map<string, unknown>` que mantém o estado entre chamadas. Métodos:
+**9. `stateLocal()`** — closure baseada em `Map<string, unknown>` que mantém o estado entre chamadas. Métodos:
 
 - `getStateOne(key)`: retorna o valor de uma chave
 - `setState(newState)`: mescla um objeto no state
 - `clearState()`: limpa todo o state
 
-**9. `timeOutControl()` + `timeout()`** — gerenciam um timer de inatividade. Se o tempo entre chunks exceder `timeOut`, o `bodyReader` é cancelado. O timer reseta a cada chunk.
+**10. `timeOutControl()` + `timeout()`** — gerenciam um timer de inatividade. Se o tempo entre chunks exceder `timeOut`, o `bodyReader` é cancelado. O timer reseta a cada chunk.
 
-**10. Montagem do chunk** — após extrair os valores, o código:
+**11. Montagem do chunk** — após extrair os valores, o código:
 
 - Pega todas as keys de `defaultExtract` + `conditionalxtractor`
 - Busca cada valor no state via `getStateOne()`
@@ -567,9 +589,9 @@ Content-Type: text/event-stream?
 - Faz yield da string (ou `Uint8Array` se `encodeBytes: true`)
 - O objeto extraído é acumulado via `push` em `chunks` (array de objetos) para uso no `onDone`
 
-**11. `clearState()`** — após yield, o state é completamente limpo para o próximo chunk não acumular dados obsoletos.
+**12. `clearState()`** — após yield, o state é completamente limpo para o próximo chunk não acumular dados obsoletos.
 
-**12. Finalização** — quando o stream termina (reader retorna `done: true` ou mensagem `"data: [DONE]"`):
+**13. Finalização** — quando o stream termina (reader retorna `done: true` ou mensagem `"data: [DONE]"`):
 
 - Se `chunks` (array) não estiver vazio, `onDone` é chamado com `{ chunks }` — cada elemento é um objeto com as keys extraídas
 - No `finally`: `releaseLock()` no reader e `clearTimeout()` no timer de inatividade
@@ -583,25 +605,27 @@ Content-Type: text/event-stream?
 Importe de `@felipe-lib/stream-http-event/builders-providers/deepseek`:
 
 - `DeepSeekHeadersBuilder` — headers com apiKey
-- `DeepSeekBodyBuilder` — corpo da requisição completo (model, messages, stream, thinking, tools, etc.)
+- `DeepSeekBodyBuilder` — corpo da requisição completo. Métodos: `model()`, `messages()`, `thinking()`, `maxTokens()`, `responseFormat()`, `stop()`, `stream()`, `streamOptions()`, `temperature()`, `topP()`, `tools()`, `toolChoice()`, `logprobs()`, `topLogprobs()`, `userId()`
 - `DeepSeekMessageBuilder` — mensagem individual (role, content, tool_call_id, prefix, reasoning_content)
 - `DeepSeekThinkingBuilder` — configuração de thinking (type, reasoning_effort)
 - `DeepSeekResponseFormatBuilder` — formato de resposta (text, json_object)
 - `DeepSeekToolBuilder` — definição de ferramenta (name, description, parameters, strict)
 - `DeepSeekToolParametersBuilder` — parâmetros da ferramenta (properties, required)
 
-> Cada builder DeepSeek exporta sua própria interface de retorno: `DeepSeekBody`, `DeepSeekMessageBuild`, `DeepSeekThink`, `DeepSeekResponseFmt`, `DeepSeekToolParam`, `DeepSeekToolBuild`.
+> Cada builder DeepSeek exporta sua própria interface de retorno: `DeepSeekBody`, `DeepSeekMessageBuild`, `DeepSeekThink`, `DeepSeekReasonEffort`, `DeepSeekResponseFmt`, `DeepSeekToolParam`, `DeepSeekToolBuild`.
 
 ### Anthropic
 
 Importe de `@felipe-lib/stream-http-event/builders-providers/anthropic`:
 
-- `AnthropicHeadersBuilder` — headers com apiKey e versão
-- `AnthropicBodyBuilder` — corpo da requisição (model, max_tokens, messages, system, thinking, etc.)
+- `AnthropicHeadersBuilder` — headers com apiKey e versão. Métodos: `apiKey()`, `version()`
+- `AnthropicBodyBuilder` — corpo da requisição. Métodos: `messages()`, `model()`, `maxTokens()`, `system()`, `thinking()`, `cacheControl()`, `container()`, `inferenceGeo()`, `metadata()`, `outputConfig()`, `serviceTier()`, `stopSequences()`, `stream()`, `tools()`, `toolChoice()`, `userProfileId()`
 - `AnthropicMessageBuilder` — mensagem individual (role, content)
-- `AnthropicThinkingBuilder` — configuração de thinking (type, budget_tokens)
+- `AnthropicThinkingBuilder` — configuração de thinking (type, budget_tokens, display)
+- `AnthropicInputSchemaBuilder` — schema de entrada da ferramenta (properties, required)
+- `AnthropicToolBuilder` — definição de ferramenta (name, description, inputSchema, strict, ...)
 
-> Cada builder Anthropic exporta sua própria interface de retorno: `AnthropicBody`, `AnthropicMessage`, `AnthropicThinking`.
+> Cada builder Anthropic exporta sua própria interface de retorno: `AnthropicBody`, `AnthropicMessage`, `AnthropicThinking`, `AnthropicInputSchemaBuild`, `AnthropicToolBuild`.
 
 ---
 
@@ -644,7 +668,19 @@ interface condicionalExtract {
     accumulate?: boolean;
     condition: string;
 }
+
+interface BeforeRequestConfig {
+    url: string;
+    headers: Record<string, string>;
+    body?: Record<string, unknown>;
+}
+
+type BeforeRequestFn = (
+    config: BeforeRequestConfig,
+) => Promise<BeforeRequestConfig | void>;
 ```
+
+> Todos os tipos acima também podem ser importados de `@felipe-lib/stream-http-event/type`, que adicionalmente exporta o enum `SystemError` e o objeto `systemErrorDescription` com descrições de erros do sistema em português.
 
 ---
 
@@ -652,7 +688,7 @@ Além disso, cada builder de provedor exporta sua interface de retorno:
 
 **Anthropic:**
 ```typescript
-import type { AnthropicBody, AnthropicMessage, AnthropicThinking }
+import type { AnthropicBody, AnthropicMessage, AnthropicThinking, AnthropicInputSchemaBuild, AnthropicToolBuild, AnthropicToolUnion, ToolChoice, Tool }
     from "@felipe-lib/stream-http-event/builders-providers/anthropic";
 ```
 
@@ -800,12 +836,26 @@ The old API used JavaScript functions to extract data. The new one uses **path s
 **`accumulate`** — new accumulation flag for extracted values. Available in three levels:
 
 - **Global** (`dataFetchType.accumulate`): accumulates all chunks into a continuous string in the final output
-- **Standard extract** (`extract.accumulate`): concatenates values of the same key across chunks
-- **Conditional extract** (`condicionalExtract.accumulate`): concatenates values of the same key across chunks
+- **Standard extract** (`extract.accumulate`): when enabled, values from **all keys** in `defaultExtract` are concatenated into a single shared string
+- **Conditional extract** (`condicionalExtract.accumulate`): when enabled, values from **all keys** in `conditionalxtractor` are concatenated into a single shared string
 
 **`start()` and `abort()`** — new public methods to manage the request lifecycle. Use `start()` to obtain the internal `AbortController` and `abort()` to cancel the request.
 
 **`extractors` optional** — the `extractors` field in `dataFetchType` is now optional, allowing `fetchIA()` to be used for non-streaming calls without configuring extractors.
+
+### v2.3.0
+
+**`AnthropicInputSchemaBuilder`** and **`AnthropicToolBuilder`** — new builders for creating tool definitions in the Anthropic provider, analogous to the existing DeepSeek builders.
+
+**`tools()`** and **`toolChoice()`** — new methods on `AnthropicBodyBuilder` to configure tools and tool choice in the request body.
+
+**`AnthropicToolUnion`** — new exported type alias that unions all Anthropic tool types (custom + server tools).
+
+**`tools`** — added to `MessageCreateParamsBase` as `AnthropicToolUnion[]`.
+
+### v2.2.3
+
+Fixed typo `acumullate` → `accumulate` across the entire codebase (private property, `dataFetch()` parameter, `extract` and `condicionalExtract` interfaces, and `dataFetchType`).
 
 ---
 
@@ -827,7 +877,7 @@ stream.dataFetch<H, B>(config: dataFetchType<H, B>): void
 | `timeOut`       | `number`                                                  | No       | Inactivity timeout in milliseconds. Resets on each chunk                                          |
 | `onDone`        | `(finalData: { chunks: Record<string, unknown>[] }) => void` | No    | Callback fired when the stream ends. Receives `{ chunks }` — array of extracted objects per chunk |
 | `extractors`    | `ExtractorsType`                                          | No       | Extractor configuration                                                                           |
-| `beforeRequest` | `BeforeRequestFn`                                         | No       | Async function executed before fetch. Receives `{ url, headers, body }` and can modify each field |
+| `beforeRequest` | `BeforeRequestFn`                                         | No       | Async function executed before fetch. Receives `{ url, headers, body }` and can modify each field. If it returns `void`, original values are kept |
 | `accumulate`    | `boolean`                                                 | No       | If `true`, accumulates extracted values from all chunks into a continuous string in the output     |
 
 ---
@@ -858,7 +908,7 @@ interface condicionalExtract {
 
 - `key`: the output key name, also used internally in state
 - `forExtract`: JSON path to navigate to the desired value (e.g. `"data.choices[0].delta.content"`)
-- `accumulate`: if `true`, the extracted value is concatenated with previous values of the same key
+- `accumulate`: if `true`, the extracted value is concatenated into an accumulator **shared across all keys** in `defaultExtract`
 - Supports dot and bracket notation: `"data.choices[0].delta.content"`
 
 **`conditionalxtractor`** — only applied if the condition is met:
@@ -877,7 +927,7 @@ interface condicionalExtract {
 Executes the HTTP request and returns an `AsyncGenerator` or a parsed JSON object.
 
 ```typescript
-stream.fetchIA(options: FetchOptions): Promise<AsyncGenerator | Record<string, unknown>>
+stream.fetchIA(options: FetchOptions): Promise<any>
 ```
 
 | Parameter     | Type      | Default  | Description                                                                |
@@ -1130,6 +1180,12 @@ dataFetch()
 fetchIA()
     |
     ↓
+beforeRequest() — optional: modifies url, headers, body
+    |
+    ↓
+fetch() with url, headers, body
+    |
+    ↓
 Content-Type: text/event-stream?
     |
     ├── yes ──▶ streamIA()
@@ -1185,12 +1241,14 @@ Content-Type: text/event-stream?
 
 **1. `dataFetch()`** — stores the configuration (url, headers, body, extractors, timeout, onDone, beforeRequest, accumulate) in private instance properties.
 
-**2. `fetchIA()`** — executes `fetch()` with the configured URL, headers and body. Checks the response `Content-Type`:
+**2. `beforeRequest()`** — if configured, the `beforeRequest` function is called with `{ url, headers, body }`. Returned values (if any) override the originals.
+
+**3. `fetchIA()`** — executes `fetch()` with the URL, headers and body (modified by `beforeRequest` if applicable). Checks the response `Content-Type`:
 
 - If `text/event-stream`: returns the `AsyncGenerator` from `streamIA()`
 - Otherwise: returns `fetcher.json()` (parsed JS object)
 
-**3. `streamIA()`** — obtains a `ReadableStreamDefaultReader` and enters an infinite loop. Each iteration:
+**4. `streamIA()`** — obtains a `ReadableStreamDefaultReader` and enters an infinite loop. Each iteration:
 
 - Reads bytes from the stream with `bodyReader.read()`
 - Decodes with `TextDecoder` and adds to the internal buffer
@@ -1199,35 +1257,35 @@ Content-Type: text/event-stream?
 - Checks for `"data: [DONE]"`
 - Builds the chunk with extracted values and yields
 
-**4. `bufferControl()`** — closure maintaining a string buffer. Methods:
+**5. `bufferControl()`** — closure maintaining a string buffer. Methods:
 
 - `getBuffer()`: returns the current buffer
 - `setBuffer(data)`: replaces the buffer
 - `add(data)`: appends data to the buffer
 
-**5. `serialize()`** — splits the buffer by `\n\n` (SSE message delimiter). The last (incomplete) part goes back to the buffer. For each complete message:
+**6. `serialize()`** — splits the buffer by `\n\n` (SSE message delimiter). The last (incomplete) part goes back to the buffer. For each complete message:
 
 - Splits by `\n`
 - Parses lines starting with `data:` (JSON) and `event:` (string)
 - If `"data: [DONE]"` is found, returns immediately to stop the stream
 - Calls `GetValueExtract()` for each message
 
-**6. `GetValueExtract()`** — for each parsed SSE object, applies the configured extractors:
+**7. `GetValueExtract()`** — for each parsed SSE object, applies the configured extractors:
 
-- `defaultExtract`: iterates each entry, navigates the object with `getValueByPath` using `forExtract`. If `accumulate` is `true`, concatenates the current value with previous ones for the same key; otherwise saves the raw value to state
-- `conditionalxtractor`: iterates each entry, navigates the object with `getValueByPath` using `path`. If `accumulate` is `true`, concatenates the current value with previous ones for the same key. Only saves to state if the value strictly equals `condition`
+- `defaultExtract`: iterates each entry, navigates the object with `getValueByPath` using `forExtract`. If `accumulate` is `true`, concatenates into a **single shared accumulator** for all keys in `defaultExtract`; otherwise saves the raw value to state
+- `conditionalxtractor`: iterates each entry, navigates the object with `getValueByPath` using `path`. If `accumulate` is `true`, concatenates into a **single shared accumulator** for all keys in `conditionalxtractor`. Only saves to state if the value strictly equals `condition`
 
-**7. `getValueByPath(obj, path)`** — navigates an object using a path like `"data.choices[0].delta.content"`. Supports dots and brackets. Returns `undefined` if the path doesn't exist.
+**8. `getValueByPath(obj, path)`** — navigates an object using a path like `"data.choices[0].delta.content"`. Supports dots and brackets. Returns `undefined` if the path doesn't exist.
 
-**8. `stateLocal()`** — `Map<string, unknown>`-based closure that maintains state between calls. Methods:
+**9. `stateLocal()`** — `Map<string, unknown>`-based closure that maintains state between calls. Methods:
 
 - `getStateOne(key)`: returns the value for a key
 - `setState(newState)`: merges an object into state
 - `clearState()`: clears all state
 
-**9. `timeOutControl()` + `timeout()`** — manage an inactivity timer. If the time between chunks exceeds `timeOut`, the `bodyReader` is cancelled. The timer resets on each chunk.
+**10. `timeOutControl()` + `timeout()`** — manage an inactivity timer. If the time between chunks exceeds `timeOut`, the `bodyReader` is cancelled. The timer resets on each chunk.
 
-**10. Chunk assembly** — after extracting values, the code:
+**11. Chunk assembly** — after extracting values, the code:
 
 - Gets all keys from `defaultExtract` + `conditionalxtractor`
 - Looks up each value in state via `getStateOne()`
@@ -1238,9 +1296,9 @@ Content-Type: text/event-stream?
 - Yields the string (or `Uint8Array` if `encodeBytes: true`)
 - The extracted object is pushed into `chunks` array (object accumulation) for use in `onDone`
 
-**11. `clearState()`** — after yielding, the state is fully cleared so the next chunk doesn't carry stale data.
+**12. `clearState()`** — after yielding, the state is fully cleared so the next chunk doesn't carry stale data.
 
-**12. Finalization** — when the stream ends (reader returns `done: true` or `"data: [DONE]"` message):
+**13. Finalization** — when the stream ends (reader returns `done: true` or `"data: [DONE]"` message):
 
 - If `chunks` (array) is not empty, `onDone` is called with `{ chunks }` — each element is an object with the extracted keys
 - In `finally`: `releaseLock()` on the reader and `clearTimeout()` on the inactivity timer
@@ -1254,25 +1312,27 @@ Content-Type: text/event-stream?
 Import from `@felipe-lib/stream-http-event/builders-providers/deepseek`:
 
 - `DeepSeekHeadersBuilder` — headers with apiKey
-- `DeepSeekBodyBuilder` — full request body (model, messages, stream, thinking, tools, etc.)
+- `DeepSeekBodyBuilder` — full request body. Methods: `model()`, `messages()`, `thinking()`, `maxTokens()`, `responseFormat()`, `stop()`, `stream()`, `streamOptions()`, `temperature()`, `topP()`, `tools()`, `toolChoice()`, `logprobs()`, `topLogprobs()`, `userId()`
 - `DeepSeekMessageBuilder` — individual message (role, content, tool_call_id, prefix, reasoning_content)
 - `DeepSeekThinkingBuilder` — thinking configuration (type, reasoning_effort)
 - `DeepSeekResponseFormatBuilder` — response format (text, json_object)
 - `DeepSeekToolBuilder` — tool definition (name, description, parameters, strict)
 - `DeepSeekToolParametersBuilder` — tool parameters (properties, required)
 
-> Each DeepSeek builder exports its own return interface: `DeepSeekBody`, `DeepSeekMessageBuild`, `DeepSeekThink`, `DeepSeekResponseFmt`, `DeepSeekToolParam`, `DeepSeekToolBuild`.
+> Each DeepSeek builder exports its own return interface: `DeepSeekBody`, `DeepSeekMessageBuild`, `DeepSeekThink`, `DeepSeekReasonEffort`, `DeepSeekResponseFmt`, `DeepSeekToolParam`, `DeepSeekToolBuild`.
 
 ### Anthropic
 
 Import from `@felipe-lib/stream-http-event/builders-providers/anthropic`:
 
-- `AnthropicHeadersBuilder` — headers with apiKey and version
-- `AnthropicBodyBuilder` — request body (model, max_tokens, messages, system, thinking, etc.)
+- `AnthropicHeadersBuilder` — headers with apiKey and version. Methods: `apiKey()`, `version()`
+- `AnthropicBodyBuilder` — request body. Methods: `messages()`, `model()`, `maxTokens()`, `system()`, `thinking()`, `cacheControl()`, `container()`, `inferenceGeo()`, `metadata()`, `outputConfig()`, `serviceTier()`, `stopSequences()`, `stream()`, `tools()`, `toolChoice()`, `userProfileId()`
 - `AnthropicMessageBuilder` — individual message (role, content)
-- `AnthropicThinkingBuilder` — thinking configuration (type, budget_tokens)
+- `AnthropicThinkingBuilder` — thinking configuration (type, budget_tokens, display)
+- `AnthropicInputSchemaBuilder` — tool input schema (properties, required)
+- `AnthropicToolBuilder` — tool definition (name, description, inputSchema, strict, ...)
 
-> Each Anthropic builder exports its own return interface: `AnthropicBody`, `AnthropicMessage`, `AnthropicThinking`.
+> Each Anthropic builder exports its own return interface: `AnthropicBody`, `AnthropicMessage`, `AnthropicThinking`, `AnthropicInputSchemaBuild`, `AnthropicToolBuild`.
 
 ---
 
@@ -1315,7 +1375,19 @@ interface condicionalExtract {
     accumulate?: boolean;
     condition: string;
 }
+
+interface BeforeRequestConfig {
+    url: string;
+    headers: Record<string, string>;
+    body?: Record<string, unknown>;
+}
+
+type BeforeRequestFn = (
+    config: BeforeRequestConfig,
+) => Promise<BeforeRequestConfig | void>;
 ```
+
+> All types above can also be imported from `@felipe-lib/stream-http-event/type`, which additionally exports the `SystemError` enum and `systemErrorDescription` constant with system error descriptions.
 
 ---
 
@@ -1323,7 +1395,7 @@ Additionally, each provider builder exports its own return interface:
 
 **Anthropic:**
 ```typescript
-import type { AnthropicBody, AnthropicMessage, AnthropicThinking }
+import type { AnthropicBody, AnthropicMessage, AnthropicThinking, AnthropicInputSchemaBuild, AnthropicToolBuild, AnthropicToolUnion, ToolChoice, Tool }
     from "@felipe-lib/stream-http-event/builders-providers/anthropic";
 ```
 

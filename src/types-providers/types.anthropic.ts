@@ -103,10 +103,7 @@ export interface CitationsConfigParam {
 
 export interface DocumentBlockParam {
     source:
-        | Base64PDFSource
-        | PlainTextSource
-        | URLPDFSource
-        | ContentBlockSource;
+        Base64PDFSource | PlainTextSource | URLPDFSource | ContentBlockSource;
     type: "document";
     cache_control?: CacheControlEphemeral | null;
     citations?: CitationsConfigParam | null;
@@ -217,7 +214,7 @@ export interface WebSearchToolRequestError {
 }
 
 export interface WebSearchToolResultBlockParam {
-    content: WebSearchToolResultBlockParamContent | WebSearchToolRequestError;
+    content: WebSearchToolResultBlockParamContent[] | WebSearchToolRequestError;
     tool_use_id: string;
     type: "web_search_tool_result";
     cache_control?: CacheControlEphemeral | null;
@@ -287,8 +284,7 @@ export interface EncryptedCodeExecutionResultBlockParam {
 }
 
 export type CodeExecutionToolResultBlockParamContent =
-    | CodeExecutionToolResultErrorParam
-    | EncryptedCodeExecutionResultBlockParam;
+    CodeExecutionToolResultErrorParam | EncryptedCodeExecutionResultBlockParam;
 
 export interface CodeExecutionToolResultBlockParam {
     content: CodeExecutionToolResultBlockParamContent;
@@ -297,23 +293,143 @@ export interface CodeExecutionToolResultBlockParam {
     cache_control?: CacheControlEphemeral | null;
 }
 
+export type BashCodeExecutionToolResultErrorCode =
+    | "invalid_tool_input"
+    | "unavailable"
+    | "too_many_requests"
+    | "execution_time_exceeded"
+    | "output_file_too_large";
+
+export interface BashCodeExecutionToolResultErrorParam {
+    error_code: BashCodeExecutionToolResultErrorCode;
+    type: "bash_code_execution_tool_result_error";
+}
+
+export interface BashCodeExecutionOutputBlockParam {
+    file_id: string;
+    type: "bash_code_execution_output";
+}
+
+export interface BashCodeExecutionResultBlockParam {
+    content: BashCodeExecutionOutputBlockParam;
+    return_code: number;
+    stderr: string;
+    stdout: string;
+    type: "bash_code_execution_result";
+}
+
+export type Content_BashCodeExecutionToolResultBlockParam =
+    BashCodeExecutionToolResultErrorParam | BashCodeExecutionResultBlockParam;
+
+export interface BashCodeExecutionToolResultBlockParam {
+    content: Content_BashCodeExecutionToolResultBlockParam;
+    tool_use_id: string;
+    type: "bash_code_execution_tool_result";
+    cache_control: CacheControlEphemeral;
+}
+
+export type TextEditorCodeExecutionToolResultErrorCode =
+    | "invalid_tool_input"
+    | "unavailable"
+    | "too_many_requests"
+    | "execution_time_exceeded"
+    | "file_not_found";
+
+export interface TextEditorCodeExecutionToolResultErrorParam {
+    error_code: TextEditorCodeExecutionToolResultErrorCode;
+    type: "text_editor_code_execution_tool_result_error";
+    error_message?: string | null;
+}
+
+export interface TextEditorCodeExecutionViewResultBlockParam {
+    content: string;
+    file_type: "text" | "image" | "pdf";
+    type: "text_editor_code_execution_view_result";
+    num_lines?: number | null;
+    start_line?: number | null;
+    total_lines?: number | null;
+}
+
+export interface TextEditorCodeExecutionCreateResultBlockParam {
+    is_file_update: boolean;
+    type: "text_editor_code_execution_create_result";
+}
+
+export interface TextEditorCodeExecutionStrReplaceResultBlockParam {
+    type: "text_editor_code_execution_str_replace_result";
+    lines?: Array<string> | null;
+    new_lines?: number | null;
+    new_start?: number | null;
+    old_lines?: number | null;
+    old_start?: number | null;
+}
+
+export interface TextEditorCodeExecutionToolResultBlockParam {
+    content:
+        | TextEditorCodeExecutionToolResultErrorParam
+        | TextEditorCodeExecutionViewResultBlockParam
+        | TextEditorCodeExecutionCreateResultBlockParam
+        | TextEditorCodeExecutionStrReplaceResultBlockParam;
+    tool_use_id: string;
+    type: "text_editor_code_execution_tool_result";
+    cache_control?: CacheControlEphemeral | null;
+}
+
+export type ToolSearchToolResultErrorCode =
+    | "invalid_tool_input"
+    | "unavailable"
+    | "too_many_requests"
+    | "execution_time_exceeded";
+
+export interface ToolSearchToolResultErrorParam {
+    error_code: ToolSearchToolResultErrorCode;
+    type: "tool_search_tool_result_error";
+    error_message?: string | null;
+}
+
+export interface ToolSearchToolSearchResultBlockParam {
+    tool_references: Array<ToolReferenceBlockParam>;
+    type: "tool_search_tool_search_result";
+}
+
+export interface ToolSearchToolResultBlockParam {
+    content:
+        ToolSearchToolResultErrorParam | ToolSearchToolSearchResultBlockParam;
+    tool_use_id: string;
+    type: "tool_search_tool_result";
+    cache_control?: CacheControlEphemeral | null;
+}
+
+export interface ContainerUploadBlockParam {
+    file_id: string;
+    type: "container_upload";
+    cache_control?: CacheControlEphemeral | null;
+}
+
+export interface MidConversationSystemBlockParam {
+    content: Array<TextBlockParam>;
+    type: "mid_conv_system";
+    cache_control?: CacheControlEphemeral | null;
+}
+
 export type ContentBlockParam =
     | TextBlockParam
     | ImageBlockParam
     | DocumentBlockParam
+    | SearchResultBlockParam
     | ThinkingBlockParam
     | RedactedThinkingBlockParam
     | ToolUseBlockParam
     | ToolResultBlockParam
-    | ToolReferenceBlockParam
-    | SearchResultBlockParam
     | ServerToolUseBlockParam
     | WebSearchToolResultBlockParam
     | WebFetchToolResultBlockParam
-    | CodeExecutionToolResultBlockParam;
+    | CodeExecutionToolResultBlockParam
+    | BashCodeExecutionToolResultBlockParam
+    | TextEditorCodeExecutionToolResultBlockParam;
 
 export interface Messages {
-    role: "user" | "assistant";
+    role: "user" | "assistant" | "system";
     content: string | ContentBlockParam[];
 }
 
@@ -327,15 +443,17 @@ export interface FormatResponse {
 
 export interface CacheControlEphemeral {
     type: "ephemeral";
-    ttl?: "5m" | "1h";
+    ttl: "5m" | "1h";
 }
 
 export interface ToolChoiceAuto {
     type: "auto";
+    disable_parallel_tool_use?: boolean;
 }
 
 export interface ToolChoiceAny {
     type: "any";
+    disable_parallel_tool_use?: boolean;
 }
 
 export interface ToolChoiceTool {
@@ -344,35 +462,387 @@ export interface ToolChoiceTool {
     disable_parallel_tool_use?: boolean;
 }
 
-export type ToolChoice = ToolChoiceAuto | ToolChoiceAny | ToolChoiceTool;
+export interface ToolChoiceNone {
+    type: "none";
+}
+
+export type ToolChoice =
+    ToolChoiceAuto | ToolChoiceAny | ToolChoiceTool | ToolChoiceNone;
+
+export type ThinkingConfigEnabled_display = "summarized" | "omitted";
 
 export interface ThinkingConfigEnabled {
     type: "enabled";
     budget_tokens: number;
+    display?: ThinkingConfigEnabled_display;
 }
 
 export interface ThinkingConfigDisabled {
     type: "disabled";
 }
 
+export interface ThinkingConfigAdaptive {
+    type: "adaptive";
+    display: ThinkingConfigEnabled_display;
+}
+
 export type ThinkingConfigParam =
-    | ThinkingConfigEnabled
-    | ThinkingConfigDisabled;
+    ThinkingConfigEnabled | ThinkingConfigDisabled | ThinkingConfigAdaptive;
+
+export interface InputSchema {
+    type: "object";
+    properties?: Record<string, unknown> | null;
+    required?: Array<string> | null;
+}
+
+export interface Tool {
+    input_schema: InputSchema;
+    name: string;
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    description?: string;
+    eager_input_streaming?: boolean | null;
+    input_examples?: Array<Record<string, unknown>>;
+    strict?: boolean;
+    type?: "custom" | null;
+}
+
+export interface ToolBash20250124 {
+    name: "bash";
+    type: "bash_20250124";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    input_examples?: Array<Record<string, unknown>>;
+    strict?: boolean;
+}
+
+export interface CodeExecutionTool20250522 {
+    name: "code_execution";
+    type: "code_execution_20250522";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    strict?: boolean;
+}
+
+export interface CodeExecutionTool20250825 {
+    name: "code_execution";
+    type: "code_execution_20250825";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    strict?: boolean;
+}
+
+export interface CodeExecutionTool20260120 {
+    name: "code_execution";
+    type: "code_execution_20260120";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    strict?: boolean;
+}
+
+export interface CodeExecutionTool20260521 {
+    name: "code_execution";
+    type: "code_execution_20260521";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    strict?: boolean;
+}
+
+export interface MemoryTool20250818 {
+    name: "memory";
+
+    type: "memory_20250818";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    input_examples?: Array<Record<string, unknown>>;
+    strict?: boolean;
+}
+
+export interface ToolTextEditor20250124 {
+    name: "str_replace_editor";
+    type: "text_editor_20250124";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    input_examples?: Array<Record<string, unknown>>;
+    strict?: boolean;
+}
+
+export interface ToolTextEditor20250429 {
+    name: "str_replace_based_edit_tool";
+    type: "text_editor_20250429";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    input_examples?: Array<Record<string, unknown>>;
+    strict?: boolean;
+}
+
+export interface ToolTextEditor20250728 {
+    name: "str_replace_based_edit_tool";
+    type: "text_editor_20250728";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    input_examples?: Array<Record<string, unknown>>;
+    max_characters?: number | null;
+    strict?: boolean;
+}
+
+export interface UserLocation {
+    type: "approximate";
+    city?: string | null;
+    country?: string | null;
+    region?: string | null;
+    timezone?: string | null;
+}
+
+export interface WebSearchTool20250305 {
+    name: "web_search";
+    type: "web_search_20250305";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    allowed_domains?: Array<string> | null;
+    blocked_domains?: Array<string> | null;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    max_uses?: number | null;
+    strict?: boolean;
+    user_location?: UserLocation | null;
+}
+
+export interface WebFetchTool20250910 {
+    name: "web_fetch";
+    type: "web_fetch_20250910";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    allowed_domains?: Array<string> | null;
+    blocked_domains?: Array<string> | null;
+    cache_control?: CacheControlEphemeral | null;
+    citations?: CitationsConfigParam | null;
+    defer_loading?: boolean;
+    max_content_tokens?: number | null;
+    max_uses?: number | null;
+    strict?: boolean;
+}
+
+export interface WebSearchTool20260209 {
+    name: "web_search";
+    type: "web_search_20260209";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    allowed_domains?: Array<string> | null;
+    blocked_domains?: Array<string> | null;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    max_uses?: number | null;
+    strict?: boolean;
+    user_location?: UserLocation | null;
+}
+
+export interface WebFetchTool20260209 {
+    name: "web_fetch";
+    type: "web_fetch_20260209";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    allowed_domains?: Array<string> | null;
+    blocked_domains?: Array<string> | null;
+    cache_control?: CacheControlEphemeral | null;
+    citations?: CitationsConfigParam | null;
+    defer_loading?: boolean;
+    max_content_tokens?: number | null;
+    max_uses?: number | null;
+    strict?: boolean;
+}
+
+export interface WebFetchTool20260309 {
+    name: "web_fetch";
+    type: "web_fetch_20260309";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    allowed_domains?: Array<string> | null;
+    blocked_domains?: Array<string> | null;
+    cache_control?: CacheControlEphemeral | null;
+    citations?: CitationsConfigParam | null;
+    defer_loading?: boolean;
+    max_content_tokens?: number | null;
+    max_uses?: number | null;
+    strict?: boolean;
+    use_cache?: boolean;
+}
+
+export interface WebSearchTool20260318 {
+    name: "web_search";
+    type: "web_search_20260318";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    allowed_domains?: Array<string> | null;
+    blocked_domains?: Array<string> | null;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    max_uses?: number | null;
+    response_inclusion?: "full" | "excluded";
+    strict?: boolean;
+    user_location?: UserLocation | null;
+}
+
+export interface WebFetchTool20260318 {
+    name: "web_fetch";
+    type: "web_fetch_20260318";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    allowed_domains?: Array<string> | null;
+    blocked_domains?: Array<string> | null;
+    cache_control?: CacheControlEphemeral | null;
+    citations?: CitationsConfigParam | null;
+    defer_loading?: boolean;
+    max_content_tokens?: number | null;
+    max_uses?: number | null;
+    response_inclusion?: "full" | "excluded";
+    use_cache?: boolean;
+}
+
+export interface ToolSearchToolBm25_20251119 {
+    name: "tool_search_tool_bm25";
+    type: "tool_search_tool_bm25_20251119" | "tool_search_tool_bm25";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    strict?: boolean;
+}
+
+export interface ToolSearchToolRegex20251119 {
+    name: "tool_search_tool_regex";
+    type: "tool_search_tool_regex_20251119" | "tool_search_tool_regex";
+    allowed_callers?: Array<
+        | "direct"
+        | "code_execution_20250825"
+        | "code_execution_20260120"
+        | "code_execution_20260521"
+    >;
+    cache_control?: CacheControlEphemeral | null;
+    defer_loading?: boolean;
+    strict?: boolean;
+}
+
+export type AnthropicToolUnion =
+    | Tool
+    | ToolBash20250124
+    | CodeExecutionTool20250522
+    | CodeExecutionTool20250825
+    | CodeExecutionTool20260120
+    | CodeExecutionTool20260521
+    | MemoryTool20250818
+    | ToolTextEditor20250124
+    | ToolTextEditor20250429
+    | ToolTextEditor20250728
+    | WebSearchTool20250305
+    | WebFetchTool20250910
+    | WebSearchTool20260209
+    | WebFetchTool20260209
+    | WebFetchTool20260309
+    | WebSearchTool20260318
+    | WebFetchTool20260318
+    | ToolSearchToolBm25_20251119
+    | ToolSearchToolRegex20251119;
 
 export interface MessageCreateParamsBase {
     max_tokens: number;
     messages: Messages[];
     model: Modelo;
-    system?: string | TextBlockParam[];
-    //temperature?: number;
-    //top_p?: number;
-    //top_k?: number;
-    thinking?: ThinkingConfigParam;
-    //tools?: (ToolUseBlockParam | ServerToolUseBlockParam)[];
-    //tool_choice?: ToolChoice;
     cache_control?: CacheControlEphemeral | null;
-    container?: string | null;
     inference_geo?: string | null;
+    container?: string | null;
     metadata?: {
         user_id?: string | null;
     };
@@ -380,6 +850,12 @@ export interface MessageCreateParamsBase {
     service_tier?: "auto" | "standard_only";
     stop_sequences?: string[];
     stream?: boolean;
+    system?: string | TextBlockParam[];
+    thinking?: ThinkingConfigParam;
+    tool_choice?: ToolChoice;
+    tools?: AnthropicToolUnion[];
+
+    user_profile_id?: string;
 }
 
 export type Modelo =
